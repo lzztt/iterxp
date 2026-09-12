@@ -5,3 +5,4 @@ tool.sh
 *.log
 iterxp-agent
 *.pid
+.iterxp_agent_state.json
