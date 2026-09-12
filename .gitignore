@@ -6,3 +6,5 @@ tool.sh
 iterxp-agent
 *.pid
 .iterxp_agent_state.json
+iterxp-agent.tmp
+iterxp-agent.new
