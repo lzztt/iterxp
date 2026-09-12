@@ -44,8 +44,20 @@ def api(url, key, payload=None, headers=()):
         auth = "header = " + json.dumps("Authorization: Bearer " + key) + "\n"
         return json.loads(subprocess.check_output(args + [url], input=auth, text=True))
 
+def github_items(path):
+    page = 1
+    separator = "&" if "?" in path else "?"
+    while True:
+        items = api(f"https://api.github.com/repos/{repo}/{path}{separator}per_page=100&page={page}",
+                    keys["github"])
+        yield from items
+        if len(items) < 100:
+            return
+        page += 1
+
 context.touch()
 seen = set()
+seen_comments = set()
 last_context = ""
 next_poll = 0
 empty_retry = False
@@ -53,20 +65,18 @@ print(f"Watching {context}; polling {repo}.", flush=True)
 
 while True:
     if time.monotonic() >= next_poll:
-        page = 1
-        while True:
-            issues = api(
-                f"https://api.github.com/repos/{repo}/issues?state=open&per_page=100&page={page}",
-                keys["github"],
-            )
-            for issue in issues:
-                if "pull_request" not in issue and issue["id"] not in seen:
-                    append(f"Issue #{issue['number']}: {issue['title']}\n"
-                           f"{issue['html_url']}\n{issue['body'] or ''}")
-                    seen.add(issue["id"])
-            if len(issues) < 100:
-                break
-            page += 1
+        for issue in github_items("issues?state=open"):
+            if "pull_request" in issue:
+                continue
+            if issue["id"] not in seen:
+                append(f"Issue #{issue['number']}: {issue['title']}\n"
+                       f"{issue['html_url']}\n{issue['body'] or ''}")
+                seen.add(issue["id"])
+            for comment in github_items(f"issues/{issue['number']}/comments"):
+                if comment["id"] not in seen_comments:
+                    append(f"Comment on issue #{issue['number']} by {comment['user']['login']}:\n"
+                           f"{comment['html_url']}\n{comment['body'] or ''}")
+                    seen_comments.add(comment["id"])
         next_poll = time.monotonic() + 30
 
     text = context.read_text()
@@ -76,7 +86,7 @@ while True:
 
     response = api(
         "https://api.inference.wandb.ai/v1/chat/completions", keys["wandb"],
-        {"model": model, "max_tokens": 16384, "reasoning_effort": "low",
+        {"model": model, "max_tokens": 16384, "reasoning_effort": "high",
          "messages": [{"role": "system", "content": system},
                       {"role": "user", "content": redact(text)}]},
         headers=("OpenAI-Project: longti/inference",),
