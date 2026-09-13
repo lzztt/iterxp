@@ -8,3 +8,6 @@ iterxp-agent
 .iterxp_agent_state.json
 iterxp-agent.tmp
 iterxp-agent.new
+iterxp
+iterxp-agent-v2
+.iterxp_v2/
