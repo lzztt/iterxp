@@ -54,9 +54,11 @@ func sourcesNewer(repoDir, bin string) bool {
 func buildAgent(cfg Config, dest string) error {
 	cmd := exec.Command("go", "build", "-o", dest, "./v2")
 	cmd.Dir = cfg.RepoDir
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("go build ./v2: %w\n%s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func truncate(s string, max int) string {
@@ -353,15 +355,43 @@ func main() {
 		if (binMissing || sourcesNewer(cfg.RepoDir, cfg.AgentPath)) && !pinnedSource {
 			log.Printf("new agent source detected; building candidate for %s", cfg.AgentPath)
 			candidate := cfg.AgentPath + ".candidate"
-			if err := buildAgent(cfg, candidate); err != nil {
-				log.Printf("agent candidate build failed: %v", err)
+			retries := cfg.BuildRetries
+			if retries <= 0 {
+				retries = 1
+			}
+			var buildErr error
+			recheck := false
+			for attempt := 0; attempt < retries; attempt++ {
+				if attempt > 0 {
+					time.Sleep(cfg.PollInterval)
+					freshHash, hErr := hashSource(cfg.RepoDir)
+					if hErr == nil && freshHash != sourceHash {
+						// The source changed while we were retrying; resume the
+						// outer loop so we build the new snapshot instead of
+						// reporting a transient partial-write failure.
+						sourceHash = freshHash
+						recheck = true
+						break
+					}
+				}
+				buildErr = buildAgent(cfg, candidate)
+				if buildErr == nil {
+					break
+				}
+				log.Printf("agent candidate build attempt %d/%d failed: %v", attempt+1, retries, buildErr)
+			}
+			if recheck && buildErr != nil {
+				continue
+			}
+			if buildErr != nil {
+				log.Printf("agent candidate build failed: %v", buildErr)
 				st.PinnedSourceHash = sourceHash
 				if saveErr := saveState(cfg.StatePath, st); saveErr != nil {
 					log.Printf("save state after build failure: %v", saveErr)
 				}
 				title := "IterXP agent build failed"
 				body := fmt.Sprintf("## IterXP agent build failed\n\n- Time: %s\n- Repo: %s\n- Target: %s\n\n```\n%s\n```",
-					time.Now().UTC().Format(time.RFC3339), cfg.RepoDir, cfg.AgentPath, truncate(err.Error(), 8000))
+					time.Now().UTC().Format(time.RFC3339), cfg.RepoDir, cfg.AgentPath, truncate(buildErr.Error(), 8000))
 				maybeReport(cfg, &st, sourceHash, title, body)
 				time.Sleep(cfg.PollInterval)
 				continue

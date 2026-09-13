@@ -27,6 +27,7 @@ type Config struct {
 	SmokeTimeout    time.Duration
 	MaxFailures     int
 	MaxWorkers      int
+	BuildRetries    int
 }
 
 func getenv(key, fallback string) string {
@@ -81,6 +82,7 @@ func loadConfig() Config {
 		SmokeTimeout:    getenvDuration("ITERXP_WATCHER_SMOKE_TIMEOUT", 15*time.Second),
 		MaxFailures:     getenvInt("ITERXP_WATCHER_MAX_FAILURES", 3),
 		MaxWorkers:      getenvInt("ITERXP_MAX_WORKERS", 2),
+		BuildRetries:    getenvInt("ITERXP_WATCHER_BUILD_RETRIES", 3),
 	}
 }
 

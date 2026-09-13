@@ -135,3 +135,25 @@ func TestBuildAgentFailureLeavesCurrentWorkerRunning(t *testing.T) {
 		t.Fatalf("current worker is no longer running after failed candidate build: %v", err)
 	}
 }
+
+func TestBuildAgentErrorIncludesCompilerOutput(t *testing.T) {
+	dir := t.TempDir()
+	v2Dir := filepath.Join(dir, "v2")
+	if err := os.MkdirAll(v2Dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/brokenbuild\n\ngo 1.20\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(v2Dir, "main.go"), []byte("package main\n\nfunc main() {\n\tundefinedIdentifier.call()\n}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := buildAgent(Config{RepoDir: dir}, filepath.Join(dir, "candidate"))
+	if err == nil {
+		t.Fatal("buildAgent unexpectedly succeeded for a broken package")
+	}
+	if !strings.Contains(err.Error(), "undefinedIdentifier") && !strings.Contains(err.Error(), "undefined: undefinedIdentifier") {
+		t.Fatalf("build error did not include compiler output: %v", err)
+	}
+}
