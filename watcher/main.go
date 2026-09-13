@@ -410,6 +410,8 @@ func main() {
 			log.Printf("promoted agent candidate hash=%s previous=%s", newHash, oldHash)
 		}
 
+		reconcileWorkers(cfg)
+
 		if current == nil && time.Since(lastStartAttempt) >= cfg.PollInterval {
 			p, err := startAgent(cfg)
 			if err != nil {

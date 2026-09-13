@@ -113,3 +113,79 @@ func TestAppendLLMCall(t *testing.T) {
 		t.Fatal("expected llm_calls.jsonl to contain a record")
 	}
 }
+
+func TestSessionHasPendingWork(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSession(Issue{ID: 7, Number: 77}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if sessionHasPendingWork(s) {
+		t.Fatal("empty session unexpectedly has pending work")
+	}
+
+	text := "Issue #77: do work\n"
+	if err := os.WriteFile(s.ContextPath, []byte(text), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !sessionHasPendingWork(s) {
+		t.Fatal("session with new context is not pending")
+	}
+
+	h := hashString(text)
+	if err := s.SaveState(SessionState{IssueID: 7, IssueNumber: 77, ContextHash: h}); err != nil {
+		t.Fatal(err)
+	}
+	if sessionHasPendingWork(s) {
+		t.Fatal("session with matching context hash unexpectedly pending")
+	}
+
+	if err := s.SaveState(SessionState{IssueID: 7, IssueNumber: 77, PendingContextHash: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if !sessionHasPendingWork(s) {
+		t.Fatal("session with PendingContextHash is not pending")
+	}
+}
+
+func TestUpdateAndClearWorkerState(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSession(Issue{ID: 7, Number: 77}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := updateWorkerState(s, "version-1", "working", "model-tool-step", time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Worker == nil {
+		t.Fatal("Worker state not written")
+	}
+	if st.Worker.PID != os.Getpid() {
+		t.Fatalf("Worker.PID = %d, want %d", st.Worker.PID, os.Getpid())
+	}
+	if st.Worker.Version != "version-1" || st.Worker.Status != "working" || st.Worker.Operation != "model-tool-step" {
+		t.Fatalf("unexpected worker state: %+v", st.Worker)
+	}
+	if st.Worker.ProcessStart == "" {
+		t.Fatal("Worker.ProcessStart is empty")
+	}
+	if st.Worker.LastHeartbeat.IsZero() {
+		t.Fatal("Worker.LastHeartbeat is zero")
+	}
+
+	if err := clearWorkerState(s); err != nil {
+		t.Fatal(err)
+	}
+	st, err = s.LoadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Worker != nil {
+		t.Fatalf("Worker state not cleared: %+v", st.Worker)
+	}
+}

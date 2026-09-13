@@ -41,6 +41,27 @@ func NewAgent(cfg *Config, client *Client) *Agent {
 	return agent
 }
 
+func NewIssueAgent(cfg *Config, client *Client, session *Session) *Agent {
+	skills, skillText := loadSkills(*cfg)
+	agent := &Agent{
+		cfg:         cfg,
+		client:      client,
+		tools:       map[string]Tool{},
+		skillsBlock: skillText,
+		sessions:    map[int]*Session{},
+		seenIssues:  map[int64]bool{},
+	}
+	_ = skills
+	agent.loadTools()
+	if session != nil {
+		agent.sessions[session.IssueNumber] = session
+		if session.IssueID > 0 {
+			agent.seenIssues[session.IssueID] = true
+		}
+	}
+	return agent
+}
+
 func (a *Agent) loadTools() {
 	entries, err := os.ReadDir(a.cfg.ToolsDir)
 	if err != nil {
@@ -98,10 +119,6 @@ func (a *Agent) loadSessions() {
 		if st.IssueID > 0 {
 			session.IssueID = st.IssueID
 			a.seenIssues[st.IssueID] = true
-		}
-		if err := a.ensureSessionWorktree(session); err != nil {
-			log.Printf("resume worktree %s: %v", name, err)
-			continue
 		}
 		a.sessions[num] = session
 	}
@@ -203,9 +220,6 @@ func (a *Agent) pollGitHub() error {
 					continue
 				}
 				a.sessions[issue.Number] = session
-				if err := a.ensureSessionWorktree(session); err != nil {
-					log.Printf("create worktree for issue %d: %v", issue.Number, err)
-				}
 			}
 			if issue.ID > 0 {
 				session.IssueID = issue.ID
@@ -287,7 +301,7 @@ func (a *Agent) snapshotSessions() []*Session {
 	return out
 }
 
-func (a *Agent) Run() {
+func (a *Agent) RunDispatcher() {
 	if err := a.pollGitHub(); err != nil {
 		log.Printf("initial poll failed: %v", err)
 	}
@@ -299,10 +313,6 @@ func (a *Agent) Run() {
 				log.Printf("poll failed: %v", err)
 			}
 			a.lastPoll = time.Now()
-		}
-
-		for _, session := range a.snapshotSessions() {
-			a.runSession(session)
 		}
 		time.Sleep(1 * time.Second)
 	}

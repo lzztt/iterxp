@@ -24,17 +24,18 @@ type Comment struct {
 }
 
 type SessionState struct {
-	IssueID            int64     `json:"issue_id"`
-	IssueNumber        int       `json:"issue_number"`
-	Title              string    `json:"title"`
-	WorktreePath       string    `json:"worktree_path,omitempty"`
-	WorktreeBranch     string    `json:"worktree_branch,omitempty"`
-	WorktreeBaseCommit string    `json:"worktree_base_commit,omitempty"`
-	ContextHash        string    `json:"context_hash"`
-	PendingContextHash string    `json:"pending_context_hash,omitempty"`
-	Done               bool      `json:"done"`
-	SeenCommentIDs     []int64   `json:"seen_comment_ids,omitempty"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	IssueID            int64        `json:"issue_id"`
+	IssueNumber        int          `json:"issue_number"`
+	Title              string       `json:"title"`
+	WorktreePath       string       `json:"worktree_path,omitempty"`
+	WorktreeBranch     string       `json:"worktree_branch,omitempty"`
+	WorktreeBaseCommit string       `json:"worktree_base_commit,omitempty"`
+	ContextHash        string       `json:"context_hash"`
+	PendingContextHash string       `json:"pending_context_hash,omitempty"`
+	Done               bool         `json:"done"`
+	SeenCommentIDs     []int64      `json:"seen_comment_ids,omitempty"`
+	Worker             *WorkerState `json:"worker,omitempty"`
+	UpdatedAt          time.Time    `json:"updated_at"`
 
 	LLMCalls            int64     `json:"llm_calls,omitempty"`
 	LLMPromptTokens     int64     `json:"llm_prompt_tokens,omitempty"`
@@ -113,4 +114,15 @@ type Skill struct {
 	Name        string
 	Path        string
 	Description string
+}
+
+type WorkerState struct {
+	PID           int       `json:"pid,omitempty"`
+	ProcessStart  string    `json:"process_start,omitempty"`
+	Version       string    `json:"version,omitempty"`
+	Status        string    `json:"status,omitempty"`
+	Operation     string    `json:"operation,omitempty"`
+	Deadline      time.Time `json:"deadline,omitempty"`
+	StartedAt     time.Time `json:"started_at,omitempty"`
+	LastHeartbeat time.Time `json:"last_heartbeat,omitempty"`
 }
