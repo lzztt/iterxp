@@ -156,6 +156,9 @@ func (a *Agent) buildPromptWithRepoDir(repoDir string) string {
 	if agentsBlock := loadAgentsBlock(cfg); agentsBlock != "" {
 		parts = append(parts, agentsBlock)
 	}
+	if cliBlock := cliInventoryBlock(nil); cliBlock != "" {
+		parts = append(parts, cliBlock)
+	}
 	_, skillsText := loadSkills(cfg)
 	if skillsText != "" {
 		parts = append(parts, skillsText)
