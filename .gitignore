@@ -17,3 +17,5 @@ iterxp-agent.last_good
 iterxp-watcher
 iterxp-watcher.tmp
 .iterxp_v2/watcher_state.json
+iterxp-agent-v2.last_good
+*.candidate

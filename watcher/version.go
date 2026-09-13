@@ -23,6 +23,7 @@ type Config struct {
 	PollInterval    time.Duration
 	StableWindow    time.Duration
 	StartTimeout    time.Duration
+	SmokeTimeout    time.Duration
 	MaxFailures     int
 }
 
@@ -68,12 +69,13 @@ func loadConfig() Config {
 		Repo:            getenv("ITERXP_REPO", "lzztt/iterxp"),
 		GitHubTokenPath: getenv("ITERXP_GITHUB_TOKEN", filepath.Join(home, "token", "github")),
 		RepoDir:         repoDir,
-		AgentPath:       getenv("ITERXP_AGENT_BIN", filepath.Join(repoDir, "iterxp-agent")),
-		LastGoodPath:    getenv("ITERXP_LAST_GOOD_BIN", filepath.Join(repoDir, "iterxp-agent.last_good")),
+		AgentPath:       getenv("ITERXP_AGENT_BIN", filepath.Join(repoDir, "iterxp-agent-v2")),
+		LastGoodPath:    getenv("ITERXP_LAST_GOOD_BIN", filepath.Join(repoDir, "iterxp-agent-v2.last_good")),
 		StatePath:       getenv("ITERXP_WATCHER_STATE", filepath.Join(configDir, "watcher_state.json")),
 		PollInterval:    getenvDuration("ITERXP_WATCHER_POLL_INTERVAL", 5*time.Second),
 		StableWindow:    getenvDuration("ITERXP_WATCHER_STABLE_WINDOW", 30*time.Second),
 		StartTimeout:    getenvDuration("ITERXP_WATCHER_START_TIMEOUT", 10*time.Second),
+		SmokeTimeout:    getenvDuration("ITERXP_WATCHER_SMOKE_TIMEOUT", 15*time.Second),
 		MaxFailures:     getenvInt("ITERXP_WATCHER_MAX_FAILURES", 3),
 	}
 }

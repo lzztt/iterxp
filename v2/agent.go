@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -292,6 +294,13 @@ func (a *Agent) Run() {
 	}
 }
 
+func (a *Agent) retryDelay() time.Duration {
+	if a.cfg == nil || a.cfg.RetryDelay <= 0 {
+		return 0
+	}
+	return a.cfg.RetryDelay
+}
+
 func (a *Agent) runSession(session *Session) {
 	state, err := session.LoadState()
 	if err != nil {
@@ -315,13 +324,32 @@ func (a *Agent) runSession(session *Session) {
 		}
 	}
 	contextHash := hashString(contextText)
-	if strings.TrimSpace(contextText) == "" || state.ContextHash == contextHash {
+	if strings.TrimSpace(contextText) == "" {
 		return
 	}
+	if state.PendingContextHash == "" && state.ContextHash == contextHash {
+		return
+	}
+	if state.Done {
+		state.Done = false
+	}
 
-	state.ContextHash = contextHash
+	// Keep the snapshot pending until the response/tool result is fully
+	// appended. Do not commit ContextHash before that action finishes.
+	if state.PendingContextHash != contextHash {
+		state.PendingContextHash = contextHash
+	}
+	if state.ContextHash != contextHash {
+		delay := a.retryDelay()
+		if delay > 0 && !state.LLMLastCallAt.IsZero() && time.Since(state.LLMLastCallAt) < delay {
+			if saveErr := session.SaveState(state); saveErr != nil {
+				log.Printf("save pending state %d: %v", session.IssueNumber, saveErr)
+			}
+			return
+		}
+	}
 	if err := session.SaveState(state); err != nil {
-		log.Printf("save state %d: %v", session.IssueNumber, err)
+		log.Printf("save pending state %d: %v", session.IssueNumber, err)
 		return
 	}
 
@@ -362,21 +390,40 @@ func (a *Agent) runSession(session *Session) {
 	if strings.TrimSpace(content) == "" || reason == "length" {
 		log.Printf("session %d: incomplete response reason=%s completion_tokens=%d", session.IssueNumber, reason, response.Usage.CompletionTokens)
 		if refusal != "" || hasToolCalls || (reason != "length" && reason != "stop") {
-			_ = session.AppendContext("The previous model response was not executable. Return exactly one small step.")
+			if err := session.AppendContext("The previous model response was not executable. Return exactly one small step."); err != nil {
+				log.Printf("append incomplete feedback session %d: %v", session.IssueNumber, err)
+				return
+			}
+		} else {
+			if err := session.AppendContext("The previous model response contained no complete action. Return exactly one small step."); err != nil {
+				log.Printf("append incomplete feedback session %d: %v", session.IssueNumber, err)
+				return
+			}
+		}
+		if err := a.finishPending(session, &state, contextHash); err != nil {
+			log.Printf("save pending after incomplete session %d: %v", session.IssueNumber, err)
 			return
 		}
-		_ = session.AppendContext("The previous model response contained no complete action. Return exactly one small step.")
 		return
 	}
 
 	command := strings.TrimSpace(content)
 	if command == "Done" {
+		if err := a.finishPending(session, &state, contextHash); err != nil {
+			log.Printf("save pending after done session %d: %v", session.IssueNumber, err)
+			return
+		}
 		state.Done = true
 		if err := session.SaveState(state); err != nil {
 			log.Printf("save state %d: %v", session.IssueNumber, err)
 		}
 		log.Printf("session %d: Done", session.IssueNumber)
 		return
+	}
+
+	snapshotHash := contextHash
+	if state.PendingContextHash != "" {
+		snapshotHash = state.PendingContextHash
 	}
 
 	var stdout, stderr string
@@ -392,8 +439,22 @@ func (a *Agent) runSession(session *Session) {
 		log.Printf("append result %d: %v", session.IssueNumber, err)
 		return
 	}
+	state.ContextHash = snapshotHash
+	state.PendingContextHash = ""
+	state.Done = false
+	if err := session.SaveState(state); err != nil {
+		log.Printf("save state after result %d: %v", session.IssueNumber, err)
+		return
+	}
 
 	log.Printf("session %d exit_code=%d", session.IssueNumber, exitCode)
+}
+
+func (a *Agent) finishPending(session *Session, st *SessionState, snapshotHash string) error {
+	st.ContextHash = snapshotHash
+	st.PendingContextHash = ""
+	st.Done = false
+	return session.SaveState(*st)
 }
 
 func (a *Agent) compactContext(session *Session, contextText string) (string, error) {
@@ -432,28 +493,109 @@ func (a *Agent) workDir(session *Session) string {
 	return session.Dir
 }
 
+func (a *Agent) toolTimeout() time.Duration {
+	if a.cfg != nil && a.cfg.ToolTimeout > 0 {
+		return a.cfg.ToolTimeout
+	}
+	return 2 * time.Minute
+}
+
+func (a *Agent) killTimeout() time.Duration {
+	if a.cfg != nil && a.cfg.KillTimeout > 0 {
+		return a.cfg.KillTimeout
+	}
+	return 5 * time.Second
+}
+
+func readFileString(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func (a *Agent) runCommand(name string, args []string, dir string, extraEnv []string) (string, string, int) {
+	timeout := a.toolTimeout()
+	killTimeout := a.killTimeout()
+
+	stdoutFile, err := os.CreateTemp("", "iterxp-stdout-")
+	if err != nil {
+		return "", err.Error(), -1
+	}
+	stdoutPath := stdoutFile.Name()
+	defer os.Remove(stdoutPath)
+
+	stderrFile, err := os.CreateTemp("", "iterxp-stderr-")
+	if err != nil {
+		_ = stdoutFile.Close()
+		return "", err.Error(), -1
+	}
+	stderrPath := stderrFile.Name()
+	defer os.Remove(stderrPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Stdout = stdoutFile
+	cmd.Stderr = stderrFile
+
+	if err := cmd.Start(); err != nil {
+		_ = stdoutFile.Close()
+		_ = stderrFile.Close()
+		return readFileString(stdoutPath), err.Error() + "\n" + readFileString(stderrPath), -1
+	}
+	_ = stdoutFile.Close()
+	_ = stderrFile.Close()
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	timedOut := false
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+	case <-ctx.Done():
+		timedOut = true
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		killTimer := time.NewTimer(killTimeout)
+		select {
+		case waitErr = <-waitCh:
+		case <-killTimer.C:
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			waitErr = <-waitCh
+		}
+		// Kill any owned descendants that survived the initial group signal.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	}
+
+	stdout := readFileString(stdoutPath)
+	stderr := readFileString(stderrPath)
+	code := 0
+	if timedOut {
+		code = 124
+		stderr += fmt.Sprintf("\ncommand timed out after %s", timeout)
+	} else if waitErr != nil {
+		if exitErr, ok := waitErr.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			code = -1
+			stderr += waitErr.Error()
+		}
+	}
+	return stdout, stderr, code
+}
+
 func (a *Agent) runBash(command string, session *Session) (string, string, int) {
 	toolPath := filepath.Join(session.Dir, "tool.sh")
 	if err := os.WriteFile(toolPath, []byte(command+"\n"), 0700); err != nil {
 		return "", err.Error(), -1
 	}
-	cmd := exec.Command("bash", toolPath)
-	cmd.Dir = a.workDir(session)
-	cmd.Env = append(os.Environ(), "ITERXP_SESSION_DIR="+session.Dir)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	code := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		} else {
-			code = -1
-			stderr.WriteString(err.Error())
-		}
-	}
-	return stdout.String(), stderr.String(), code
+	return a.runCommand("bash", []string{"-e", "-o", "pipefail", toolPath}, a.workDir(session), []string{"ITERXP_SESSION_DIR=" + session.Dir})
 }
 
 func (a *Agent) runTool(command string, session *Session) (string, string, int) {
@@ -475,21 +617,5 @@ func (a *Agent) runTool(command string, session *Session) (string, string, int) 
 			args = append(args, arg)
 		}
 	}
-	cmd := exec.Command(tool.Path, args...)
-	cmd.Dir = a.workDir(session)
-	cmd.Env = append(os.Environ(), "ITERXP_SESSION_DIR="+session.Dir)
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	code := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		} else {
-			code = -1
-			stderr.WriteString(err.Error())
-		}
-	}
-	return stdout.String(), stderr.String(), code
+	return a.runCommand(tool.Path, args, a.workDir(session), []string{"ITERXP_SESSION_DIR=" + session.Dir})
 }

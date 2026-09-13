@@ -24,13 +24,14 @@ type Comment struct {
 }
 
 type SessionState struct {
-	IssueID        int64     `json:"issue_id"`
-	IssueNumber    int       `json:"issue_number"`
-	Title          string    `json:"title"`
-	ContextHash    string    `json:"context_hash"`
-	Done           bool      `json:"done"`
-	SeenCommentIDs []int64   `json:"seen_comment_ids,omitempty"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	IssueID            int64     `json:"issue_id"`
+	IssueNumber        int       `json:"issue_number"`
+	Title              string    `json:"title"`
+	ContextHash        string    `json:"context_hash"`
+	PendingContextHash string    `json:"pending_context_hash,omitempty"`
+	Done               bool      `json:"done"`
+	SeenCommentIDs     []int64   `json:"seen_comment_ids,omitempty"`
+	UpdatedAt          time.Time `json:"updated_at"`
 
 	LLMCalls            int64     `json:"llm_calls,omitempty"`
 	LLMPromptTokens     int64     `json:"llm_prompt_tokens,omitempty"`
