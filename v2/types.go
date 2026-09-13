@@ -11,7 +11,20 @@ type Issue struct {
 	Title       string          `json:"title"`
 	Body        string          `json:"body"`
 	HTMLURL     string          `json:"html_url"`
+	State       string          `json:"state"`
+	ClosedAt    string          `json:"closed_at"`
+	NodeID      string          `json:"node_id"`
+	Labels      []IssueLabel    `json:"labels"`
 	PullRequest json.RawMessage `json:"pull_request"`
+}
+
+type IssueLabel struct {
+	Name string `json:"name"`
+}
+
+type CommentBody struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
 }
 
 type Comment struct {
@@ -34,6 +47,12 @@ type SessionState struct {
 	PendingContextHash string       `json:"pending_context_hash,omitempty"`
 	Done               bool         `json:"done"`
 	SeenCommentIDs     []int64      `json:"seen_comment_ids,omitempty"`
+	HandoffNote        string       `json:"handoff_note,omitempty"`
+	IssueTypeLabel     string       `json:"issue_type_label,omitempty"`
+	HandoffCommentID   int64        `json:"handoff_comment_id,omitempty"`
+	HandoffPosted      bool         `json:"handoff_posted,omitempty"`
+	IssueLabeled       bool         `json:"issue_labeled,omitempty"`
+	IssueClosed        bool         `json:"issue_closed,omitempty"`
 	Worker             *WorkerState `json:"worker,omitempty"`
 	UpdatedAt          time.Time    `json:"updated_at"`
 

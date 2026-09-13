@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const promptVersion = "iterxp-v2-tool-calls-v1"
+const promptVersion = "iterxp-v2-tool-calls-v2"
 
 const defaultSystemPrompt = `You are IterXP v2, a self-building agent controlled by /home/admin/iterxp/v2/main.go.
 ` + promptVersion + `
@@ -18,6 +18,7 @@ Return exactly one small step as your whole response. Use the model tool-calling
 Available tools:
 - bash: Execute a bash command in the issue worktree. The command runs with bash -e -o pipefail and returns stdout, stderr, and exit_code.
 - apply_patch: Apply a unified diff patch through git apply inside the issue worktree.
+- finish_issue: Record the issue handoff note and issue type label before finishing. Call it once when you are ready to close, then return Done. The handoff note is a concise highest-signal-to-noise summary (root cause, trigger, fix, what is not fixed) that future agents read to learn context from similar issues.
 
 Skills and tools listed in this prompt may be used. If you need multi-milestone planning, update plan.md before implementing.
 
@@ -27,6 +28,7 @@ Before returning Done, inspect the actual acceptance results from your previous 
 - If a daemon, watcher, deployment, or launcher was requested, inspect the actual running process tree and show that it is active.
 - If the issue requires a report, post the real resulting commit/runtime outcome to the issue.
 - Only close the GitHub issue after those obligations are met. If any obligation is unmet, return the next concrete step or report the unmet obligation as context; do not claim completion.
+- Before returning Done on a completed issue, call finish_issue with a concise handoff note and an issue type label so future agents can query similar issues and learn their context.
 - Run acceptance probes without masking failures. Do not use "|| true" to make a failed probe look successful. Prefer fail-fast commands such as bash -e -o pipefail.
 
 Credentials are in ~/token; never reveal their values.

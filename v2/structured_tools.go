@@ -64,6 +64,27 @@ func builtinToolDefinitions() []ToolDefinition {
 		{
 			Type: "function",
 			Function: ToolFunction{
+				Name:        "finish_issue",
+				Description: "Record the issue handoff note and issue type label to finalize the issue. The runtime will post the handoff note as a comment, apply the issue type label, and close the issue after Done.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"handoff_note": map[string]any{
+							"type":        "string",
+							"description": "Concise handoff note for future agents: root cause, trigger, fix, and what is not fixed. Highest signal-to-noise ratio.",
+						},
+						"issue_type_label": map[string]any{
+							"type":        "string",
+							"description": "Short kebab-case issue type label used to query similar past issues, e.g. state-machine-bug, deployment-gap, completion-discipline-gap.",
+						},
+					},
+					"required": []string{"handoff_note", "issue_type_label"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
 				Name:        "apply_patch",
 				Description: "Apply a unified diff patch to files inside the assigned issue worktree. The patch is passed to git apply through stdin. Creates, edits, and deletes files without rewriting unrelated content.",
 				Parameters: map[string]any{
@@ -89,6 +110,7 @@ Use the model tool-calling interface to select exactly one tool call per assista
 Available tools:
 - bash: Execute a bash command in the issue worktree.
 - apply_patch: Apply a unified diff patch in the issue worktree.
+- finish_issue: Record a concise handoff note and issue type label for the issue, then return Done to close it.
 Do not return Markdown fences, legacy tool markup, XML tags, or raw shell source as executable actions.
 Assistant prose and reasoning are never executed. When no further action is needed, return the single word Done as assistant text.`
 }
@@ -135,6 +157,24 @@ func (a *Agent) executeToolCall(session *Session, call ToolCall) ToolResult {
 		}
 		stdout, stderr, code := a.applyPatch(session, args.Patch)
 		return ToolResult{Stdout: stdout, Stderr: stderr, ExitCode: code}
+	case "finish_issue":
+		var args struct {
+			HandoffNote    string `json:"handoff_note"`
+			IssueTypeLabel string `json:"issue_type_label"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return ToolResult{ExitCode: -1, Error: "invalid finish_issue arguments: " + err.Error()}
+		}
+		if strings.TrimSpace(args.HandoffNote) == "" {
+			return ToolResult{ExitCode: -1, Error: "handoff_note is empty"}
+		}
+		if strings.TrimSpace(args.IssueTypeLabel) == "" {
+			return ToolResult{ExitCode: -1, Error: "issue_type_label is empty"}
+		}
+		if err := a.recordHandoff(session, args.HandoffNote, args.IssueTypeLabel); err != nil {
+			return ToolResult{ExitCode: -1, Error: err.Error()}
+		}
+		return ToolResult{Stdout: "handoff recorded", Stderr: "", ExitCode: 0}
 	default:
 		return ToolResult{ExitCode: -1, Error: "unsupported tool call: " + name}
 	}

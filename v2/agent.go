@@ -453,10 +453,15 @@ func (a *Agent) runSession(session *Session) {
 			log.Printf("save history session %d: %v", session.IssueNumber, err)
 			return
 		}
-		state.ContextHash = snapshotHash
-		state.PendingContextHash = ""
-		state.Done = false
-		if err := session.SaveState(state); err != nil {
+		latest, loadErr := session.LoadState()
+		if loadErr != nil {
+			log.Printf("reload state after tool result %d: %v", session.IssueNumber, loadErr)
+			return
+		}
+		latest.ContextHash = snapshotHash
+		latest.PendingContextHash = ""
+		latest.Done = false
+		if err := session.SaveState(latest); err != nil {
 			log.Printf("save state after tool result %d: %v", session.IssueNumber, err)
 			return
 		}
@@ -486,8 +491,31 @@ func (a *Agent) runSession(session *Session) {
 			log.Printf("save pending after done session %d: %v", session.IssueNumber, err)
 			return
 		}
-		state.Done = true
-		if err := session.SaveState(state); err != nil {
+		if err := a.completeIssue(session); err != nil {
+			log.Printf("complete issue %d: %v", session.IssueNumber, err)
+			if err := session.AppendContext("finish_issue handoff/close failed: " + a.redact(err.Error()) + "\nUse the finish_issue tool to record a handoff note and issue type label, then return Done again."); err != nil {
+				log.Printf("append complete feedback session %d: %v", session.IssueNumber, err)
+				return
+			}
+			latest, loadErr := session.LoadState()
+			if loadErr != nil {
+				log.Printf("reload state after complete failure %d: %v", session.IssueNumber, loadErr)
+				return
+			}
+			latest.PendingContextHash = hashString(readFileString(session.ContextPath))
+			latest.Done = false
+			if err := session.SaveState(latest); err != nil {
+				log.Printf("save state after complete failure %d: %v", session.IssueNumber, err)
+			}
+			return
+		}
+		latest, loadErr := session.LoadState()
+		if loadErr != nil {
+			log.Printf("reload state after complete %d: %v", session.IssueNumber, loadErr)
+			return
+		}
+		latest.Done = true
+		if err := session.SaveState(latest); err != nil {
 			log.Printf("save state %d: %v", session.IssueNumber, err)
 		}
 		log.Printf("session %d: Done", session.IssueNumber)

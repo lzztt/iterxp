@@ -91,14 +91,14 @@ func newStructuredAgent(t *testing.T, respond func(int) (int, string), inspect f
 
 func TestBuiltinToolDefinitionsIncludeStructuredSchemas(t *testing.T) {
 	defs := builtinToolDefinitions()
-	if len(defs) != 2 {
-		t.Fatalf("tool definitions = %d, want 2", len(defs))
+	if len(defs) != 3 {
+		t.Fatalf("tool definitions = %d, want 3", len(defs))
 	}
 	byName := map[string]ToolDefinition{}
 	for _, def := range defs {
 		byName[def.Function.Name] = def
 	}
-	for _, name := range []string{"bash", "apply_patch"} {
+	for _, name := range []string{"bash", "apply_patch", "finish_issue"} {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("missing tool definition %q", name)
 		}
@@ -112,6 +112,11 @@ func TestBuiltinToolDefinitionsIncludeStructuredSchemas(t *testing.T) {
 	required = patch.Function.Parameters["required"].([]string)
 	if len(required) != 1 || required[0] != "patch" {
 		t.Fatalf("apply_patch required = %v, want [patch]", required)
+	}
+	finishIssue := byName["finish_issue"]
+	required = finishIssue.Function.Parameters["required"].([]string)
+	if len(required) != 2 || required[0] != "handoff_note" || required[1] != "issue_type_label" {
+		t.Fatalf("finish_issue required = %v, want [handoff_note issue_type_label]", required)
 	}
 }
 
@@ -153,14 +158,14 @@ func TestStructuredToolRoundTripAndResumeHistory(t *testing.T) {
 	}
 	first := requests[0]
 	mu.Unlock()
-	if len(first.Tools) != 2 {
-		t.Fatalf("first request tools = %d, want 2", len(first.Tools))
+	if len(first.Tools) != 3 {
+		t.Fatalf("first request tools = %d, want 3", len(first.Tools))
 	}
 	toolNames := map[string]bool{}
 	for _, tool := range first.Tools {
 		toolNames[tool.Function.Name] = true
 	}
-	if !toolNames["bash"] || !toolNames["apply_patch"] {
+	if !toolNames["bash"] || !toolNames["apply_patch"] || !toolNames["finish_issue"] {
 		t.Fatalf("first request tool names = %v", toolNames)
 	}
 
