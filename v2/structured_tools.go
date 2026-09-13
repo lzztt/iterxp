@@ -223,14 +223,25 @@ func (a *Agent) applyPatch(session *Session, patch string) (string, string, int)
 	if !isGitWorktree(workDir) {
 		return "", "apply_patch requires the assigned issue git worktree", -1
 	}
-	if err := validatePatchPaths(workDir, patch); err != nil {
+	if err := validatePatchPaths(workDir, normalizePatch(patch)); err != nil {
 		return "", err.Error(), -1
 	}
+	patch = normalizePatch(patch)
 	checkStdout, checkStderr, code := a.runCommandInput("git", []string{"apply", "--check"}, workDir, a.sessionEnv(session), patch)
 	if code != 0 {
 		return checkStdout, checkStderr + "\ngit apply --check failed", code
 	}
 	return a.runCommandInput("git", []string{"apply"}, workDir, a.sessionEnv(session), patch)
+}
+
+func normalizePatch(patch string) string {
+	if patch == "" {
+		return patch
+	}
+	if !strings.HasSuffix(patch, "\n") {
+		return patch + "\n"
+	}
+	return patch
 }
 
 func validatePatchPath(workDir, raw string) error {
