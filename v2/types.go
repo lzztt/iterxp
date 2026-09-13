@@ -27,6 +27,9 @@ type SessionState struct {
 	IssueID            int64     `json:"issue_id"`
 	IssueNumber        int       `json:"issue_number"`
 	Title              string    `json:"title"`
+	WorktreePath       string    `json:"worktree_path,omitempty"`
+	WorktreeBranch     string    `json:"worktree_branch,omitempty"`
+	WorktreeBaseCommit string    `json:"worktree_base_commit,omitempty"`
 	ContextHash        string    `json:"context_hash"`
 	PendingContextHash string    `json:"pending_context_hash,omitempty"`
 	Done               bool      `json:"done"`

@@ -12,6 +12,7 @@ type Session struct {
 	IssueID     int64
 	IssueNumber int
 	Dir         string
+	WorktreeDir string
 	ContextPath string
 	StatePath   string
 	PlanPath    string
@@ -27,6 +28,7 @@ func NewSession(issue Issue, baseDir string) (*Session, error) {
 		IssueID:     issue.ID,
 		IssueNumber: issue.Number,
 		Dir:         dir,
+		WorktreeDir: filepath.Join(dir, "worktree"),
 		ContextPath: filepath.Join(dir, "context.log"),
 		StatePath:   filepath.Join(dir, "state.json"),
 		PlanPath:    filepath.Join(dir, "plan.md"),

@@ -102,6 +102,10 @@ func (a *Agent) loadSessions() {
 			session.IssueID = st.IssueID
 			a.seenIssues[st.IssueID] = true
 		}
+		if err := a.ensureSessionWorktree(session); err != nil {
+			log.Printf("resume worktree %s: %v", name, err)
+			continue
+		}
 		a.sessions[num] = session
 	}
 }
@@ -129,19 +133,45 @@ func (a *Agent) toolBlock() string {
 	return b.String()
 }
 
-func (a *Agent) buildPrompt() string {
-	system := loadSystemPrompt(*a.cfg)
+func (a *Agent) repoDirForSession(session *Session) string {
+	if session != nil && isGitWorktree(session.WorktreeDir) {
+		return session.WorktreeDir
+	}
+	if a.cfg != nil && a.cfg.RepoDir != "" {
+		return a.cfg.RepoDir
+	}
+	return ""
+}
+
+func (a *Agent) buildPromptWithRepoDir(repoDir string) string {
+	if a == nil || a.cfg == nil {
+		return ""
+	}
+	cfg := *a.cfg
+	if repoDir != "" {
+		cfg.RepoDir = repoDir
+	}
+	system := loadSystemPrompt(cfg)
 	parts := []string{system}
-	if agentsBlock := loadAgentsBlock(*a.cfg); agentsBlock != "" {
+	if agentsBlock := loadAgentsBlock(cfg); agentsBlock != "" {
 		parts = append(parts, agentsBlock)
 	}
-	if a.skillsBlock != "" {
-		parts = append(parts, a.skillsBlock)
+	_, skillsText := loadSkills(cfg)
+	if skillsText != "" {
+		parts = append(parts, skillsText)
 	}
 	if toolText := a.toolBlock(); toolText != "" {
 		parts = append(parts, toolText)
 	}
 	return strings.Join(parts, "\n")
+}
+
+func (a *Agent) buildPrompt() string {
+	return a.buildPromptWithRepoDir("")
+}
+
+func (a *Agent) buildPromptForSession(session *Session) string {
+	return a.buildPromptWithRepoDir(a.repoDirForSession(session))
 }
 
 func hashString(s string) string {
@@ -192,6 +222,9 @@ func (a *Agent) pollGitHub() error {
 					continue
 				}
 				a.sessions[issue.Number] = session
+				if err := a.ensureSessionWorktree(session); err != nil {
+					log.Printf("create worktree for issue %d: %v", issue.Number, err)
+				}
 			}
 			if issue.ID > 0 {
 				session.IssueID = issue.ID
@@ -307,6 +340,10 @@ func (a *Agent) runSession(session *Session) {
 		log.Printf("load state %d: %v", session.IssueNumber, err)
 		return
 	}
+	if err := a.ensureSessionWorktree(session); err != nil {
+		log.Printf("worktree setup session %d: %v", session.IssueNumber, err)
+		return
+	}
 	contextData, err := os.ReadFile(session.ContextPath)
 	if err != nil {
 		log.Printf("read context %d: %v", session.IssueNumber, err)
@@ -354,7 +391,7 @@ func (a *Agent) runSession(session *Session) {
 	}
 
 	messages := []Message{
-		{Role: "system", Content: a.buildPrompt()},
+		{Role: "system", Content: a.buildPromptForSession(session)},
 		{Role: "user", Content: a.client.Redact(contextText)},
 	}
 	if planData, err := os.ReadFile(session.PlanPath); err == nil {
@@ -487,10 +524,27 @@ func (a *Agent) compactContext(session *Session, contextText string) (string, er
 }
 
 func (a *Agent) workDir(session *Session) string {
+	if session != nil && isGitWorktree(session.WorktreeDir) {
+		return session.WorktreeDir
+	}
 	if a.cfg != nil && a.cfg.RepoDir != "" {
 		return a.cfg.RepoDir
 	}
-	return session.Dir
+	if session != nil {
+		return session.Dir
+	}
+	return ""
+}
+
+func (a *Agent) sessionEnv(session *Session) []string {
+	if session == nil {
+		return nil
+	}
+	env := []string{"ITERXP_SESSION_DIR=" + session.Dir}
+	if isGitWorktree(session.WorktreeDir) {
+		env = append(env, "ITERXP_WORKTREE_DIR="+session.WorktreeDir)
+	}
+	return env
 }
 
 func (a *Agent) toolTimeout() time.Duration {
@@ -595,7 +649,7 @@ func (a *Agent) runBash(command string, session *Session) (string, string, int) 
 	if err := os.WriteFile(toolPath, []byte(command+"\n"), 0700); err != nil {
 		return "", err.Error(), -1
 	}
-	return a.runCommand("bash", []string{"-e", "-o", "pipefail", toolPath}, a.workDir(session), []string{"ITERXP_SESSION_DIR=" + session.Dir})
+	return a.runCommand("bash", []string{"-e", "-o", "pipefail", toolPath}, a.workDir(session), a.sessionEnv(session))
 }
 
 func (a *Agent) runTool(command string, session *Session) (string, string, int) {
@@ -617,5 +671,5 @@ func (a *Agent) runTool(command string, session *Session) (string, string, int) 
 			args = append(args, arg)
 		}
 	}
-	return a.runCommand(tool.Path, args, a.workDir(session), []string{"ITERXP_SESSION_DIR=" + session.Dir})
+	return a.runCommand(tool.Path, args, a.workDir(session), a.sessionEnv(session))
 }

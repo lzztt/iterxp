@@ -45,7 +45,7 @@ func loadSystemPrompt(cfg Config) string {
 }
 
 func loadSkills(cfg Config) ([]Skill, string) {
-	dirs := []string{cfg.SkillsDir, filepath.Join(cfg.RepoDir, "skills")}
+	dirs := []string{filepath.Join(cfg.RepoDir, "skills"), cfg.SkillsDir}
 	seen := map[string]bool{}
 	var skills []Skill
 	var b strings.Builder
