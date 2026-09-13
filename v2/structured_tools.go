@@ -78,6 +78,23 @@ func builtinToolDefinitions() []ToolDefinition {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "web_fetch",
+				Description: "Fetch a public HTTP(S) URL and return readable Markdown (HTML is converted), plain text, or pretty-printed JSON. Rejects non-public/loopback destinations, enforces a 30s timeout, 5 redirects, a 2 MiB body limit, and a 20,000-character content limit.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"url": map[string]any{
+							"type":        "string",
+							"description": "Public HTTP(S) URL to fetch. Static content only; client-rendered pages will not work.",
+						},
+					},
+					"required": []string{"url"},
+				},
+			},
+		},
 	}
 }
 
@@ -89,6 +106,7 @@ Use the model tool-calling interface to select exactly one tool call per assista
 Available tools:
 - bash: Execute a bash command in the issue worktree.
 - apply_patch: Apply a unified diff patch in the issue worktree.
+- web_fetch: Fetch a public HTTP(S) URL and return readable Markdown, plain text, or JSON.
 Do not return Markdown fences, legacy tool markup, XML tags, or raw shell source as executable actions.
 Assistant prose and reasoning are never executed. When no further action is needed, return the single word Done as assistant text.`
 }
@@ -135,6 +153,17 @@ func (a *Agent) executeToolCall(session *Session, call ToolCall) ToolResult {
 		}
 		stdout, stderr, code := a.applyPatch(session, args.Patch)
 		return ToolResult{Stdout: stdout, Stderr: stderr, ExitCode: code}
+	case "web_fetch":
+		var args struct {
+			URL string `json:"url"`
+		}
+		if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return ToolResult{ExitCode: -1, Error: "invalid web_fetch arguments: " + err.Error()}
+		}
+		if strings.TrimSpace(args.URL) == "" {
+			return ToolResult{ExitCode: -1, Error: "web_fetch URL is empty"}
+		}
+		return a.webFetchTool(session, call.Function.Arguments)
 	default:
 		return ToolResult{ExitCode: -1, Error: "unsupported tool call: " + name}
 	}

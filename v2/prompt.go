@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-const promptVersion = "iterxp-v2-tool-calls-v1"
+const promptVersion = "iterxp-v2-tool-calls-v2"
 
 const defaultSystemPrompt = `You are IterXP v2, a self-building agent controlled by /home/admin/iterxp/v2/main.go.
 ` + promptVersion + `
@@ -18,6 +18,7 @@ Return exactly one small step as your whole response. Use the model tool-calling
 Available tools:
 - bash: Execute a bash command in the issue worktree. The command runs with bash -e -o pipefail and returns stdout, stderr, and exit_code.
 - apply_patch: Apply a unified diff patch through git apply inside the issue worktree.
+- web_fetch: Fetch a public HTTP(S) URL and return readable Markdown, plain text, or JSON.
 
 Skills and tools listed in this prompt may be used. If you need multi-milestone planning, update plan.md before implementing.
 
