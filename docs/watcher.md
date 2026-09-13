@@ -31,3 +31,14 @@ Configuration is read from environment variables:
 - `ITERXP_WATCHER_MAX_FAILURES`
 
 State is stored in JSON by default at `~/.iterxp_v2/watcher_state.json`.
+
+## Agent inference configuration
+
+The v2 agent reads these environment variables:
+
+- `ITERXP_MAX_TOKENS`: maximum completion tokens per model request. Default: `32768`.
+- `ITERXP_INFERENCE_TIMEOUT`: timeout for each inference HTTP request. Default: `300s`.
+- `ITERXP_MODEL`: model name. Default: `deepseek-ai/DeepSeek-V4-Pro-0813`.
+- `ITERXP_REASONING_EFFORT`: reasoning effort. Default: `high`.
+
+At startup the agent logs the effective `model`, `reason`, `maxTokens`, and `inferenceTimeout`.

@@ -33,11 +33,15 @@ func NewClient(cfg Config) (*Client, error) {
 			redact = append(redact, val)
 		}
 	}
+	inferenceTimeout := cfg.InferenceTimeout
+	if inferenceTimeout <= 0 {
+		inferenceTimeout = 300 * time.Second
+	}
 	return &Client{
 		cfg:    cfg,
 		tokens: tokens,
 		redact: redact,
-		http:   &http.Client{Timeout: 120 * time.Second},
+		http:   &http.Client{Timeout: inferenceTimeout},
 	}, nil
 }
 

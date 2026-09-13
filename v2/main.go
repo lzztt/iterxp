@@ -17,6 +17,7 @@ type Config struct {
 	Model                   string
 	Reasoning               string
 	MaxTokens               int
+	InferenceTimeout        time.Duration
 	APIBase                 string
 	ProjectHeader           string
 	HomeDir                 string
@@ -76,7 +77,8 @@ func loadConfig() Config {
 		Repo:                    getenv("ITERXP_REPO", "lzztt/iterxp"),
 		Model:                   getenv("ITERXP_MODEL", "deepseek-ai/DeepSeek-V4-Pro-0813"),
 		Reasoning:               getenv("ITERXP_REASONING_EFFORT", "high"),
-		MaxTokens:               getenvInt("ITERXP_MAX_TOKENS", 16384),
+		MaxTokens:               getenvInt("ITERXP_MAX_TOKENS", 32768),
+		InferenceTimeout:        getenvDuration("ITERXP_INFERENCE_TIMEOUT", 300*time.Second),
 		APIBase:                 getenv("ITERXP_WANDB_API", "https://api.inference.wandb.ai/v1/chat/completions"),
 		ProjectHeader:           getenv("ITERXP_PROJECT_HEADER", "OpenAI-Project: longti/inference"),
 		HomeDir:                 home,
@@ -228,7 +230,7 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		log.Fatal(err)
 	}
 	agent := NewAgent(&cfg, client)
-	log.Printf("iterxp-v2 started: model=%s reason=%s sessions=%s", cfg.Model, cfg.Reasoning, cfg.SessionDir)
+	log.Printf("iterxp-v2 started: model=%s reason=%s maxTokens=%d inferenceTimeout=%s sessions=%s", cfg.Model, cfg.Reasoning, cfg.MaxTokens, cfg.InferenceTimeout, cfg.SessionDir)
 	agent.Run()
 	return 0
 }
