@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestNewSessionCreatesFiles(t *testing.T) {
@@ -63,5 +64,52 @@ func TestSessionContextAndStateRoundTrip(t *testing.T) {
 	}
 	if plan != "# plan" {
 		t.Fatalf("plan = %q", plan)
+	}
+}
+
+func TestEstimateTokens(t *testing.T) {
+	if got := estimateTokens(""); got != 0 {
+		t.Fatalf("estimate empty = %d, want 0", got)
+	}
+	if got := estimateTokens("abcd"); got != 1 {
+		t.Fatalf("estimate abcd = %d, want 1", got)
+	}
+	if got := estimateTokens("abcde"); got != 2 {
+		t.Fatalf("estimate abcde = %d, want 2", got)
+	}
+}
+
+func TestApplyLLMCallState(t *testing.T) {
+	now := time.Now().UTC()
+	st := SessionState{}
+	ApplyLLMCallState(&st, LLMCallRecord{Timestamp: now, PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150, DurationMS: 900})
+	if st.LLMCalls != 1 || st.LLMPromptTokens != 100 || st.LLMCompletionTokens != 50 || st.LLMTotalTokens != 150 || st.LLMDurationMS != 900 {
+		t.Fatalf("state after apply = %+v", st)
+	}
+	if !st.LLMLastCallAt.Equal(now) {
+		t.Fatalf("LLMLastCallAt = %v, want %v", st.LLMLastCallAt, now)
+	}
+	if st.LLMLastError != "" {
+		t.Fatalf("LLMLastError = %q, want empty", st.LLMLastError)
+	}
+}
+
+func TestAppendLLMCall(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSession(Issue{ID: 7, Number: 123}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := LLMCallRecord{Timestamp: time.Now(), Model: "model-x", PromptTokens: 100, CompletionTokens: 50, TotalTokens: 150}
+	if err := s.AppendLLMCall(record); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(s.LLMPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if len(text) == 0 {
+		t.Fatal("expected llm_calls.jsonl to contain a record")
 	}
 }

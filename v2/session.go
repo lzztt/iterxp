@@ -15,6 +15,7 @@ type Session struct {
 	ContextPath string
 	StatePath   string
 	PlanPath    string
+	LLMPath     string
 }
 
 func NewSession(issue Issue, baseDir string) (*Session, error) {
@@ -29,11 +30,12 @@ func NewSession(issue Issue, baseDir string) (*Session, error) {
 		ContextPath: filepath.Join(dir, "context.log"),
 		StatePath:   filepath.Join(dir, "state.json"),
 		PlanPath:    filepath.Join(dir, "plan.md"),
+		LLMPath:     filepath.Join(dir, "llm_calls.jsonl"),
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	for _, p := range []string{s.ContextPath, s.StatePath, s.PlanPath} {
+	for _, p := range []string{s.ContextPath, s.StatePath, s.PlanPath, s.LLMPath} {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			return nil, err
@@ -71,6 +73,36 @@ func (s *Session) AppendContext(text string) error {
 		return err
 	}
 	return nil
+}
+
+func (s *Session) AppendLLMCall(record LLMCallRecord) error {
+	data, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(s.LLMPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ApplyLLMCallState(st *SessionState, record LLMCallRecord) {
+	st.LLMCalls++
+	st.LLMPromptTokens += int64(record.PromptTokens)
+	st.LLMCompletionTokens += int64(record.CompletionTokens)
+	st.LLMTotalTokens += int64(record.TotalTokens)
+	st.LLMDurationMS += record.DurationMS
+	st.LLMLastCallAt = record.Timestamp
+	if record.Error != "" {
+		st.LLMLastError = record.Error
+	} else {
+		st.LLMLastError = ""
+	}
 }
 
 func (s *Session) ReadContext() (string, error) {

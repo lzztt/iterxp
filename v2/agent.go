@@ -130,6 +130,9 @@ func (a *Agent) toolBlock() string {
 func (a *Agent) buildPrompt() string {
 	system := loadSystemPrompt(*a.cfg)
 	parts := []string{system}
+	if agentsBlock := loadAgentsBlock(*a.cfg); agentsBlock != "" {
+		parts = append(parts, agentsBlock)
+	}
 	if a.skillsBlock != "" {
 		parts = append(parts, a.skillsBlock)
 	}
@@ -142,6 +145,24 @@ func (a *Agent) buildPrompt() string {
 func hashString(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+func tailByTokens(s string, maxTokens int) string {
+	if maxTokens <= 0 {
+		return ""
+	}
+	if estimateTokens(s) <= maxTokens {
+		return s
+	}
+	maxBytes := maxTokens * 4
+	if len(s) <= maxBytes {
+		return s
+	}
+	start := len(s) - maxBytes
+	if idx := strings.Index(s[start:], "\n"); idx >= 0 {
+		start += idx + 1
+	}
+	return s[start:]
 }
 
 func (a *Agent) pollGitHub() error {
@@ -283,6 +304,16 @@ func (a *Agent) runSession(session *Session) {
 		return
 	}
 	contextText := string(contextData)
+	if a.cfg != nil && a.cfg.ContextCompactThreshold > 0 && estimateTokens(contextText) > a.cfg.ContextCompactThreshold {
+		compacted, compactErr := a.compactContext(session, contextText)
+		if compactErr != nil {
+			log.Printf("compact context session %d: %v", session.IssueNumber, compactErr)
+		} else {
+			contextText = compacted
+			state.ContextCompactions++
+			state.LastCompactionAt = time.Now()
+		}
+	}
 	contextHash := hashString(contextText)
 	if strings.TrimSpace(contextText) == "" || state.ContextHash == contextHash {
 		return
@@ -305,7 +336,14 @@ func (a *Agent) runSession(session *Session) {
 		}
 	}
 
-	response, err := a.client.Chat(messages)
+	response, record, err := a.client.ChatDetailed(messages)
+	if err := session.AppendLLMCall(record); err != nil {
+		log.Printf("append llm call session %d: %v", session.IssueNumber, err)
+	}
+	ApplyLLMCallState(&state, record)
+	if err := session.SaveState(state); err != nil {
+		log.Printf("save llm call state session %d: %v", session.IssueNumber, err)
+	}
 	if err != nil {
 		log.Printf("chat session %d: %v", session.IssueNumber, err)
 		return
@@ -356,6 +394,35 @@ func (a *Agent) runSession(session *Session) {
 	}
 
 	log.Printf("session %d exit_code=%d", session.IssueNumber, exitCode)
+}
+
+func (a *Agent) compactContext(session *Session, contextText string) (string, error) {
+	if estimateTokens(contextText) <= a.cfg.ContextCompactThreshold {
+		return contextText, nil
+	}
+	archiveDir := filepath.Join(session.Dir, "context_archive")
+	if err := os.MkdirAll(archiveDir, 0700); err != nil {
+		return "", err
+	}
+	archivePath := filepath.Join(archiveDir, fmt.Sprintf("context-%s.log", time.Now().UTC().Format("20060102T150405.000000000")))
+	if err := os.WriteFile(archivePath, []byte(contextText), 0600); err != nil {
+		return "", err
+	}
+	keep := a.cfg.ContextKeepTokens
+	if keep <= 0 {
+		keep = 100000
+	}
+	const headLimit = 4000
+	head := contextText
+	if len(head) > headLimit {
+		head = head[:headLimit]
+	}
+	recent := tailByTokens(contextText, keep)
+	compacted := fmt.Sprintf("Context compacted at %s. Full previous context archived at %s.\n\n## Early context summary\n%s\n\n## Recent context\n%s", time.Now().UTC().Format(time.RFC3339), archivePath, head, recent)
+	if err := os.WriteFile(session.ContextPath, []byte(compacted), 0600); err != nil {
+		return "", err
+	}
+	return compacted, nil
 }
 
 func (a *Agent) workDir(session *Session) string {

@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -66,5 +67,37 @@ func TestLoadSessionsResumesExisting(t *testing.T) {
 	}
 	if s.IssueID != 11 {
 		t.Fatalf("resumed IssueID = %d, want 11", s.IssueID)
+	}
+}
+
+func TestTailByTokens(t *testing.T) {
+	text := strings.Repeat("a", 1000)
+	if got := estimateTokens(tailByTokens(text, 10)); got > 10 {
+		t.Fatalf("tailByTokens kept too many tokens: %d", got)
+	}
+}
+
+func TestCompactContextArchivesAndShrinks(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewSession(Issue{ID: 8, Number: 124}, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("x", 12000)
+	cfg := &Config{ContextCompactThreshold: 1000, ContextKeepTokens: 1}
+	a := &Agent{cfg: cfg}
+	compacted, err := a.compactContext(s, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(compacted, "Context compacted at") {
+		t.Fatalf("compacted output missing marker: %q", compacted)
+	}
+	if estimateTokens(compacted) >= estimateTokens(text) {
+		t.Fatalf("compacted text is not smaller: before=%d after=%d", estimateTokens(text), estimateTokens(compacted))
+	}
+	entries, err := os.ReadDir(filepath.Join(s.Dir, "context_archive"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("expected context archive file: %v", err)
 	}
 }

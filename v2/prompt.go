@@ -31,30 +31,50 @@ func loadSystemPrompt(cfg Config) string {
 }
 
 func loadSkills(cfg Config) ([]Skill, string) {
-	entries, err := os.ReadDir(cfg.SkillsDir)
-	if err != nil {
-		return nil, ""
-	}
+	dirs := []string{cfg.SkillsDir, filepath.Join(cfg.RepoDir, "skills")}
+	seen := map[string]bool{}
 	var skills []Skill
 	var b strings.Builder
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		skillPath := filepath.Join(cfg.SkillsDir, name, "SKILL.md")
-		data, err := os.ReadFile(skillPath)
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
 		}
-		content := strings.TrimSpace(string(data))
-		if content == "" {
-			continue
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if seen[name] {
+				continue
+			}
+			skillPath := filepath.Join(dir, name, "SKILL.md")
+			data, err := os.ReadFile(skillPath)
+			if err != nil {
+				continue
+			}
+			content := strings.TrimSpace(string(data))
+			if content == "" {
+				continue
+			}
+			seen[name] = true
+			skills = append(skills, Skill{Name: name, Path: skillPath, Description: firstLine(content)})
+			fmt.Fprintf(&b, "\n\n## Skill: %s\n%s\n", name, content)
 		}
-		skills = append(skills, Skill{Name: name, Path: skillPath, Description: firstLine(content)})
-		fmt.Fprintf(&b, "\n\n## Skill: %s\n%s\n", name, content)
 	}
 	return skills, b.String()
+}
+
+func loadAgentsBlock(cfg Config) string {
+	data, err := os.ReadFile(filepath.Join(cfg.RepoDir, "AGENTS.md"))
+	if err != nil {
+		return ""
+	}
+	trimmed := strings.TrimSpace(string(data))
+	if trimmed == "" {
+		return ""
+	}
+	return "\n\n# Repository AGENTS.md\n" + trimmed
 }
 
 func firstLine(s string) string {

@@ -89,7 +89,12 @@ func (c *Client) fetchJSON(url string, out interface{}) error {
 	return json.Unmarshal(data, out)
 }
 
-func (c *Client) Chat(messages []Message) (*ChatResponse, error) {
+func (c *Client) ChatDetailed(messages []Message) (*ChatResponse, LLMCallRecord, error) {
+	start := time.Now()
+	record := LLMCallRecord{
+		Timestamp: start.UTC(),
+		Model:     c.cfg.Model,
+	}
 	payload := ChatRequest{
 		Model:           c.cfg.Model,
 		MaxTokens:       c.cfg.MaxTokens,
@@ -100,11 +105,27 @@ func (c *Client) Chat(messages []Message) (*ChatResponse, error) {
 		"OpenAI-Project": strings.TrimSpace(strings.TrimPrefix(c.cfg.ProjectHeader, "OpenAI-Project:")),
 	})
 	if err != nil {
-		return nil, err
+		record.DurationMS = time.Since(start).Milliseconds()
+		record.Error = c.Redact(err.Error())
+		return nil, record, err
 	}
 	var resp ChatResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
-		return nil, err
+		record.DurationMS = time.Since(start).Milliseconds()
+		record.Error = c.Redact(err.Error())
+		return nil, record, err
 	}
-	return &resp, nil
+	record.DurationMS = time.Since(start).Milliseconds()
+	record.PromptTokens = resp.Usage.PromptTokens
+	record.CompletionTokens = resp.Usage.CompletionTokens
+	record.TotalTokens = resp.Usage.TotalTokens
+	if len(resp.Choices) > 0 {
+		record.FinishReason = resp.Choices[0].FinishReason
+	}
+	return &resp, record, nil
+}
+
+func (c *Client) Chat(messages []Message) (*ChatResponse, error) {
+	resp, _, err := c.ChatDetailed(messages)
+	return resp, err
 }

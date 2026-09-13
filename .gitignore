@@ -13,3 +13,7 @@ iterxp-agent-v2
 .iterxp_v2/
 iterxp-agent-v2.tmp
 iterxp-agent-v2
+iterxp-agent.last_good
+iterxp-watcher
+iterxp-watcher.tmp
+.iterxp_v2/watcher_state.json
