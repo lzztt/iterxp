@@ -241,6 +241,9 @@ func (a *Agent) pollGitHub() error {
 				log.Printf("load state for issue %d: %v", issue.Number, err)
 				continue
 			}
+			newPriority := issuePriority(issue)
+			priorityChanged := st.Priority != newPriority
+			st.Priority = newPriority
 			if st.IssueID == 0 {
 				st.IssueID = issue.ID
 				st.IssueNumber = issue.Number
@@ -278,7 +281,7 @@ func (a *Agent) pollGitHub() error {
 				}
 				commentPage++
 			}
-			if commentAppended || st.IssueID == 0 || st.IssueNumber == 0 {
+			if commentAppended || priorityChanged || st.IssueID == 0 || st.IssueNumber == 0 {
 				if err := session.SaveState(st); err != nil {
 					log.Printf("save comments state for issue %d: %v", issue.Number, err)
 				}

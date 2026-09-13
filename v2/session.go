@@ -61,6 +61,7 @@ func NewSession(issue Issue, baseDir string) (*Session, error) {
 			st.IssueID = issue.ID
 			st.IssueNumber = issue.Number
 			st.Title = issue.Title
+			st.Priority = issuePriority(issue)
 			st.ContextHash = hashString("")
 			if err := s.SaveState(st); err != nil {
 				return nil, err

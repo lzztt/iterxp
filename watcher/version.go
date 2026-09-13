@@ -82,7 +82,7 @@ func loadConfig() Config {
 		StartTimeout:    getenvDuration("ITERXP_WATCHER_START_TIMEOUT", 10*time.Second),
 		SmokeTimeout:    getenvDuration("ITERXP_WATCHER_SMOKE_TIMEOUT", 15*time.Second),
 		MaxFailures:     getenvInt("ITERXP_WATCHER_MAX_FAILURES", 3),
-		MaxWorkers:      getenvInt("ITERXP_MAX_WORKERS", 2),
+		MaxWorkers:      getenvInt("ITERXP_MAX_WORKERS", 10),
 		GitName:         getenv("ITERXP_GIT_NAME", "IterXP Agent"),
 		GitEmail:        getenv("ITERXP_GIT_EMAIL", "agent@iterxp.com"),
 	}

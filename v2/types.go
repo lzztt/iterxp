@@ -11,7 +11,12 @@ type Issue struct {
 	Title       string          `json:"title"`
 	Body        string          `json:"body"`
 	HTMLURL     string          `json:"html_url"`
+	Labels      []IssueLabel    `json:"labels"`
 	PullRequest json.RawMessage `json:"pull_request"`
+}
+
+type IssueLabel struct {
+	Name string `json:"name"`
 }
 
 type Comment struct {
@@ -27,6 +32,7 @@ type SessionState struct {
 	IssueID            int64        `json:"issue_id"`
 	IssueNumber        int          `json:"issue_number"`
 	Title              string       `json:"title"`
+	Priority           string       `json:"priority,omitempty"`
 	WorktreePath       string       `json:"worktree_path,omitempty"`
 	WorktreeBranch     string       `json:"worktree_branch,omitempty"`
 	WorktreeBaseCommit string       `json:"worktree_base_commit,omitempty"`
