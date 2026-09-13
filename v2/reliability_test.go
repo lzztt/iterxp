@@ -76,11 +76,13 @@ func TestToolBlockListsExecutableTool(t *testing.T) {
 
 	a := NewAgent(&Config{ToolsDir: toolsDir, SkillsDir: skillsDir, SessionDir: sessionsDir}, nil)
 	block := a.toolBlock()
-	if !strings.Contains(block, "hello-tool") {
-		t.Fatalf("toolBlock does not list executable tool: %q", block)
+	for _, want := range []string{"bash", "apply_patch", "tool call"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("toolBlock missing %q: %q", want, block)
+		}
 	}
-	if !strings.Contains(block, "@tool") {
-		t.Fatalf("toolBlock does not include @tool syntax: %q", block)
+	if strings.Contains(block, "@tool") {
+		t.Fatalf("toolBlock still advertises raw @tool syntax: %q", block)
 	}
 }
 

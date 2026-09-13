@@ -104,6 +104,7 @@ func (c *Client) ChatDetailed(messages []Message) (*ChatResponse, LLMCallRecord,
 		MaxTokens:       c.cfg.MaxTokens,
 		ReasoningEffort: c.cfg.Reasoning,
 		Messages:        messages,
+		Tools:           builtinToolDefinitions(),
 	}
 	data, err := c.apiCall("POST", c.cfg.APIBase, c.tokens["wandb"], payload, map[string]string{
 		"OpenAI-Project": strings.TrimSpace(strings.TrimPrefix(c.cfg.ProjectHeader, "OpenAI-Project:")),

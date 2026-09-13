@@ -1,19 +1,16 @@
 package main
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -111,26 +108,7 @@ func (a *Agent) loadSessions() {
 }
 
 func (a *Agent) toolBlock() string {
-	if len(a.tools) == 0 {
-		return ""
-	}
-	var names []string
-	for name := range a.tools {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var b strings.Builder
-	b.WriteString("\n\n# Available non-bash tools\n")
-	for _, name := range names {
-		tool := a.tools[name]
-		if tool.Description != "" {
-			fmt.Fprintf(&b, "- %s: %s\n", name, tool.Description)
-		} else {
-			fmt.Fprintf(&b, "- %s\n", name)
-		}
-	}
-	b.WriteString("\nTo invoke a non-bash tool, start your response with:\n@tool <name>\n<JSON argument>\n")
-	return b.String()
+	return builtinToolsBlock()
 }
 
 func (a *Agent) repoDirForSession(session *Session) string {
@@ -371,8 +349,6 @@ func (a *Agent) runSession(session *Session) {
 		state.Done = false
 	}
 
-	// Keep the snapshot pending until the response/tool result is fully
-	// appended. Do not commit ContextHash before that action finishes.
 	if state.PendingContextHash != contextHash {
 		state.PendingContextHash = contextHash
 	}
@@ -390,16 +366,23 @@ func (a *Agent) runSession(session *Session) {
 		return
 	}
 
+	history, err := session.LoadHistory()
+	if err != nil {
+		log.Printf("load history session %d: %v", session.IssueNumber, err)
+		return
+	}
+
 	messages := []Message{
 		{Role: "system", Content: a.buildPromptForSession(session)},
-		{Role: "user", Content: a.client.Redact(contextText)},
+		{Role: "user", Content: a.redact(contextText)},
 	}
 	if planData, err := os.ReadFile(session.PlanPath); err == nil {
 		plan := strings.TrimSpace(string(planData))
 		if plan != "" {
-			messages = append(messages, Message{Role: "user", Content: "Current plan from plan.md:\n" + a.client.Redact(plan)})
+			messages = append(messages, Message{Role: "user", Content: "Current plan from plan.md:\n" + a.redact(plan)})
 		}
 	}
+	messages = append(messages, history...)
 
 	response, record, err := a.client.ChatDetailed(messages)
 	if err := session.AppendLLMCall(record); err != nil {
@@ -421,21 +404,61 @@ func (a *Agent) runSession(session *Session) {
 	choice := response.Choices[0]
 	content := choice.Message.Content
 	reason := choice.FinishReason
-	refusal := choice.Message.Refusal
-	hasToolCalls := len(choice.Message.ToolCalls) > 0
+	toolCalls := choice.Message.ToolCalls
+
+	if len(toolCalls) > 0 {
+		snapshotHash := contextHash
+		if state.PendingContextHash != "" {
+			snapshotHash = state.PendingContextHash
+		}
+
+		history = append(history, Message{
+			Role:             "assistant",
+			Content:          content,
+			Refusal:          choice.Message.Refusal,
+			ReasoningContent: choice.Message.ReasoningContent,
+			ToolCalls:        toolCalls,
+		})
+		for _, call := range toolCalls {
+			result := a.executeToolCall(session, call)
+			result.Stdout = a.redact(result.Stdout)
+			result.Stderr = a.redact(result.Stderr)
+			result.Error = a.redact(result.Error)
+			resultData, marshalErr := json.Marshal(result)
+			if marshalErr != nil {
+				return
+			}
+			history = append(history, Message{Role: "tool", ToolCallID: call.ID, Content: string(resultData)})
+			marker := fmt.Sprintf("tool_call_id: %s\ntool: %s\nresult: %s", call.ID, call.Function.Name, string(resultData))
+			if err := session.AppendContext(a.redact(marker)); err != nil {
+				log.Printf("append tool result session %d: %v", session.IssueNumber, err)
+				return
+			}
+		}
+		if err := session.SaveHistory(history); err != nil {
+			log.Printf("save history session %d: %v", session.IssueNumber, err)
+			return
+		}
+		state.ContextHash = snapshotHash
+		state.PendingContextHash = ""
+		state.Done = false
+		if err := session.SaveState(state); err != nil {
+			log.Printf("save state after tool result %d: %v", session.IssueNumber, err)
+			return
+		}
+		log.Printf("session %d tool_calls=%d", session.IssueNumber, len(toolCalls))
+		return
+	}
 
 	if strings.TrimSpace(content) == "" || reason == "length" {
 		log.Printf("session %d: incomplete response reason=%s completion_tokens=%d", session.IssueNumber, reason, response.Usage.CompletionTokens)
-		if refusal != "" || hasToolCalls || (reason != "length" && reason != "stop") {
-			if err := session.AppendContext("The previous model response was not executable. Return exactly one small step."); err != nil {
-				log.Printf("append incomplete feedback session %d: %v", session.IssueNumber, err)
-				return
-			}
-		} else {
-			if err := session.AppendContext("The previous model response contained no complete action. Return exactly one small step."); err != nil {
-				log.Printf("append incomplete feedback session %d: %v", session.IssueNumber, err)
-				return
-			}
+		feedback := "The previous model response contained no complete action. Return exactly one tool call using the tool-calling interface, or exactly Done."
+		if choice.Message.Refusal != "" {
+			feedback = "The previous model response was refused and was not executed. Return exactly one tool call using the tool-calling interface, or exactly Done."
+		}
+		if err := session.AppendContext(feedback); err != nil {
+			log.Printf("append incomplete feedback session %d: %v", session.IssueNumber, err)
+			return
 		}
 		if err := a.finishPending(session, &state, contextHash); err != nil {
 			log.Printf("save pending after incomplete session %d: %v", session.IssueNumber, err)
@@ -444,8 +467,7 @@ func (a *Agent) runSession(session *Session) {
 		return
 	}
 
-	command := strings.TrimSpace(content)
-	if command == "Done" {
+	if strings.TrimSpace(content) == "Done" {
 		if err := a.finishPending(session, &state, contextHash); err != nil {
 			log.Printf("save pending after done session %d: %v", session.IssueNumber, err)
 			return
@@ -458,33 +480,15 @@ func (a *Agent) runSession(session *Session) {
 		return
 	}
 
-	snapshotHash := contextHash
-	if state.PendingContextHash != "" {
-		snapshotHash = state.PendingContextHash
-	}
-
-	var stdout, stderr string
-	var exitCode int
-	if strings.HasPrefix(command, "@tool ") {
-		stdout, stderr, exitCode = a.runTool(command, session)
-	} else {
-		stdout, stderr, exitCode = a.runBash(command, session)
-	}
-
-	result := fmt.Sprintf("$ %s\nstdout:\n%s\nstderr:\n%s\nexit_code: %d", command, stdout, stderr, exitCode)
-	if err := session.AppendContext(a.client.Redact(result)); err != nil {
-		log.Printf("append result %d: %v", session.IssueNumber, err)
+	if err := session.AppendContext("Assistant text was received without a tool call and was not executed. Return exactly one tool call using the tool-calling interface, or exactly Done."); err != nil {
+		log.Printf("append non-tool feedback session %d: %v", session.IssueNumber, err)
 		return
 	}
-	state.ContextHash = snapshotHash
-	state.PendingContextHash = ""
-	state.Done = false
-	if err := session.SaveState(state); err != nil {
-		log.Printf("save state after result %d: %v", session.IssueNumber, err)
+	if err := a.finishPending(session, &state, contextHash); err != nil {
+		log.Printf("save pending after non-tool session %d: %v", session.IssueNumber, err)
 		return
 	}
-
-	log.Printf("session %d exit_code=%d", session.IssueNumber, exitCode)
+	log.Printf("session %d: assistant text ignored", session.IssueNumber)
 }
 
 func (a *Agent) finishPending(session *Session, st *SessionState, snapshotHash string) error {
@@ -570,78 +574,7 @@ func readFileString(path string) string {
 }
 
 func (a *Agent) runCommand(name string, args []string, dir string, extraEnv []string) (string, string, int) {
-	timeout := a.toolTimeout()
-	killTimeout := a.killTimeout()
-
-	stdoutFile, err := os.CreateTemp("", "iterxp-stdout-")
-	if err != nil {
-		return "", err.Error(), -1
-	}
-	stdoutPath := stdoutFile.Name()
-	defer os.Remove(stdoutPath)
-
-	stderrFile, err := os.CreateTemp("", "iterxp-stderr-")
-	if err != nil {
-		_ = stdoutFile.Close()
-		return "", err.Error(), -1
-	}
-	stderrPath := stderrFile.Name()
-	defer os.Remove(stderrPath)
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), extraEnv...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Stdout = stdoutFile
-	cmd.Stderr = stderrFile
-
-	if err := cmd.Start(); err != nil {
-		_ = stdoutFile.Close()
-		_ = stderrFile.Close()
-		return readFileString(stdoutPath), err.Error() + "\n" + readFileString(stderrPath), -1
-	}
-	_ = stdoutFile.Close()
-	_ = stderrFile.Close()
-
-	waitCh := make(chan error, 1)
-	go func() { waitCh <- cmd.Wait() }()
-
-	timedOut := false
-	var waitErr error
-	select {
-	case waitErr = <-waitCh:
-	case <-ctx.Done():
-		timedOut = true
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		killTimer := time.NewTimer(killTimeout)
-		select {
-		case waitErr = <-waitCh:
-		case <-killTimer.C:
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			waitErr = <-waitCh
-		}
-		// Kill any owned descendants that survived the initial group signal.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	}
-
-	stdout := readFileString(stdoutPath)
-	stderr := readFileString(stderrPath)
-	code := 0
-	if timedOut {
-		code = 124
-		stderr += fmt.Sprintf("\ncommand timed out after %s", timeout)
-	} else if waitErr != nil {
-		if exitErr, ok := waitErr.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		} else {
-			code = -1
-			stderr += waitErr.Error()
-		}
-	}
-	return stdout, stderr, code
+	return a.runCommandInput(name, args, dir, extraEnv, "")
 }
 
 func (a *Agent) runBash(command string, session *Session) (string, string, int) {

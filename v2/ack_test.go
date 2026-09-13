@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,10 +25,47 @@ func (h *fakeChatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func chatBody(content string) string {
-	if content == "Done" {
-		return `{"choices":[{"message":{"content":"Done","refusal":"","tool_calls":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`
+	payload := map[string]any{
+		"choices": []map[string]any{{
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": content,
+				"refusal": "",
+			},
+			"finish_reason": "stop",
+		}},
+		"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
 	}
-	return `{"choices":[{"message":{"content":"` + strings.ReplaceAll(content, `"`, `\"`) + `","refusal":"","tool_calls":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`
+	data, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func bashToolCallBody(command string) string {
+	args, _ := json.Marshal(map[string]string{"command": command})
+	payload := map[string]any{
+		"choices": []map[string]any{{
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": "",
+				"refusal": "",
+				"tool_calls": []map[string]any{{
+					"id":   "call_1",
+					"type": "function",
+					"function": map[string]any{
+						"name":      "bash",
+						"arguments": string(args),
+					},
+				}},
+			},
+			"finish_reason": "tool_calls",
+		}},
+		"usage": map[string]any{"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
+	}
+	data, _ := json.Marshal(payload)
+	return string(data)
 }
 
 func newTestAgentForACK(t *testing.T, handler http.Handler) (*Agent, *Session, *Config, *int32) {
@@ -153,7 +191,7 @@ func TestDoneIdlesAndNewCommentResumes(t *testing.T) {
 func TestToolResultTriggersAnotherModelCall(t *testing.T) {
 	handler := &fakeChatHandler{reqs: func(n int) (int, string) {
 		if n == 1 {
-			return http.StatusOK, chatBody("echo hello")
+			return http.StatusOK, bashToolCallBody("echo hello")
 		}
 		return http.StatusOK, chatBody("Done")
 	}}
@@ -175,7 +213,7 @@ func TestToolResultTriggersAnotherModelCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "hello") || !strings.Contains(string(data), "exit_code: 0") {
+	if !strings.Contains(string(data), "hello") || !strings.Contains(string(data), `"exit_code":0`) {
 		t.Fatalf("tool result was not appended to context:\n%s", data)
 	}
 

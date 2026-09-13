@@ -17,6 +17,7 @@ type Session struct {
 	StatePath   string
 	PlanPath    string
 	LLMPath     string
+	HistoryPath string
 }
 
 func NewSession(issue Issue, baseDir string) (*Session, error) {
@@ -33,11 +34,12 @@ func NewSession(issue Issue, baseDir string) (*Session, error) {
 		StatePath:   filepath.Join(dir, "state.json"),
 		PlanPath:    filepath.Join(dir, "plan.md"),
 		LLMPath:     filepath.Join(dir, "llm_calls.jsonl"),
+		HistoryPath: filepath.Join(dir, "history.json"),
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	for _, p := range []string{s.ContextPath, s.StatePath, s.PlanPath, s.LLMPath} {
+	for _, p := range []string{s.ContextPath, s.StatePath, s.PlanPath, s.LLMPath, s.HistoryPath} {
 		f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY, 0600)
 		if err != nil {
 			return nil, err
@@ -113,6 +115,32 @@ func (s *Session) ReadContext() (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func (s *Session) LoadHistory() ([]Message, error) {
+	data, err := os.ReadFile(s.HistoryPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []Message{}, nil
+		}
+		return nil, err
+	}
+	if len(data) == 0 {
+		return []Message{}, nil
+	}
+	var messages []Message
+	if err := json.Unmarshal(data, &messages); err != nil {
+		return nil, err
+	}
+	return messages, nil
+}
+
+func (s *Session) SaveHistory(messages []Message) error {
+	data, err := json.MarshalIndent(messages, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.HistoryPath, data, 0600)
 }
 
 func (s *Session) LoadState() (SessionState, error) {
