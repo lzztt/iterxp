@@ -258,13 +258,6 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		return runIssueWorker(cfg, issueNumber)
 	}
 
-	unlock, err := acquireWorkerLock(cfg.ConfigDir)
-	if err != nil {
-		log.Printf("%v", err)
-		return 1
-	}
-	defer unlock()
-
 	client, err := NewClient(cfg)
 	if err != nil {
 		log.Fatal(err)
