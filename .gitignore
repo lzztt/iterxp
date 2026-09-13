@@ -19,3 +19,4 @@ iterxp-watcher.tmp
 .iterxp_v2/watcher_state.json
 iterxp-agent-v2.last_good
 *.candidate
+iterxp-agent-v2.pre_cutover.*
