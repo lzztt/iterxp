@@ -60,6 +60,11 @@ func TestCompleteIssuePostsCommentAddsLabelAndCloses(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			payload, _ := json.Marshal(map[string]any{"id": 987, "body": body["body"]})
 			_, _ = w.Write(payload)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/labels/ack-bug":
+			http.Error(w, "not found", http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widgets/labels":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"name":"ack-bug","color":"0075ca"}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/issues/161/labels"):
 			gotLabelURL = r.URL.Path
 			var body map[string][]string
@@ -152,7 +157,12 @@ func TestCompleteIssueIsIdempotent(t *testing.T) {
 			commentCalls++
 			w.WriteHeader(http.StatusCreated)
 			_, _ = w.Write([]byte(`{"id":1,"body":"x"}`))
-		case strings.HasSuffix(r.URL.Path, "/labels") && r.Method == http.MethodPost:
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widgets/labels/ack-bug":
+			http.Error(w, "not found", http.StatusNotFound)
+		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widgets/labels":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"name":"ack-bug","color":"0075ca"}`))
+		case strings.HasSuffix(r.URL.Path, "/issues/161/labels") && r.Method == http.MethodPost:
 			labelCalls++
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`[{"name":"ack-bug"}]`))

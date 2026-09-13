@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -53,14 +54,37 @@ func (c *Client) listLabels(number int) ([]string, error) {
 	return out, nil
 }
 
-// addLabel adds a single label to an issue. It is idempotent when the label is already present.
+// addLabel adds a single label to an issue. Before attaching it, the label is
+// created on the repository if it does not exist yet, so previously unseen
+// issue-type labels can be applied on the first use.
 func (c *Client) addLabel(number int, label string) error {
 	if strings.TrimSpace(label) == "" {
 		return fmt.Errorf("empty label")
 	}
+	if err := c.ensureLabel(label); err != nil {
+		return err
+	}
 	payload := map[string][]string{"labels": {label}}
 	url := fmt.Sprintf("%s/repos/%s/issues/%d/labels", strings.TrimRight(c.cfg.GitHubAPIBase, "/"), c.cfg.Repo, number)
 	_, err := c.apiCallJSON("POST", url, payload, nil)
+	return err
+}
+
+// ensureLabel creates a repository label if it does not exist, making label
+// application idempotent for first-time issue-type labels.
+func (c *Client) ensureLabel(label string) error {
+	name := strings.TrimSpace(label)
+	if name == "" {
+		return fmt.Errorf("empty label")
+	}
+	base := strings.TrimRight(c.cfg.GitHubAPIBase, "/")
+	getURL := fmt.Sprintf("%s/repos/%s/labels/%s", base, c.cfg.Repo, url.PathEscape(name))
+	if _, err := c.apiCallJSON("GET", getURL, nil, nil); err == nil {
+		return nil
+	}
+	payload := map[string]string{"name": name, "color": "0075ca"}
+	postURL := fmt.Sprintf("%s/repos/%s/labels", base, c.cfg.Repo)
+	_, err := c.apiCallJSON("POST", postURL, payload, nil)
 	return err
 }
 
