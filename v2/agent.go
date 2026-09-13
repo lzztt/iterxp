@@ -220,6 +220,7 @@ func (a *Agent) pollGitHub() error {
 					continue
 				}
 				a.sessions[issue.Number] = session
+				a.seenIssues[issue.ID] = true
 			}
 			if issue.ID > 0 {
 				session.IssueID = issue.ID
