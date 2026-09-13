@@ -37,24 +37,25 @@ type Comment struct {
 }
 
 type SessionState struct {
-	IssueID            int64        `json:"issue_id"`
-	IssueNumber        int          `json:"issue_number"`
-	Title              string       `json:"title"`
-	WorktreePath       string       `json:"worktree_path,omitempty"`
-	WorktreeBranch     string       `json:"worktree_branch,omitempty"`
-	WorktreeBaseCommit string       `json:"worktree_base_commit,omitempty"`
-	ContextHash        string       `json:"context_hash"`
-	PendingContextHash string       `json:"pending_context_hash,omitempty"`
-	Done               bool         `json:"done"`
-	SeenCommentIDs     []int64      `json:"seen_comment_ids,omitempty"`
-	HandoffNote        string       `json:"handoff_note,omitempty"`
-	IssueTypeLabel     string       `json:"issue_type_label,omitempty"`
-	HandoffCommentID   int64        `json:"handoff_comment_id,omitempty"`
-	HandoffPosted      bool         `json:"handoff_posted,omitempty"`
-	IssueLabeled       bool         `json:"issue_labeled,omitempty"`
-	IssueClosed        bool         `json:"issue_closed,omitempty"`
-	Worker             *WorkerState `json:"worker,omitempty"`
-	UpdatedAt          time.Time    `json:"updated_at"`
+	IssueID            int64          `json:"issue_id"`
+	IssueNumber        int            `json:"issue_number"`
+	Title              string         `json:"title"`
+	WorktreePath       string         `json:"worktree_path,omitempty"`
+	WorktreeBranch     string         `json:"worktree_branch,omitempty"`
+	WorktreeBaseCommit string         `json:"worktree_base_commit,omitempty"`
+	ContextHash        string         `json:"context_hash"`
+	PendingContextHash string         `json:"pending_context_hash,omitempty"`
+	Done               bool           `json:"done"`
+	SeenCommentIDs     []int64        `json:"seen_comment_ids,omitempty"`
+	HandoffNote        string         `json:"handoff_note,omitempty"`
+	IssueTypeLabel     string         `json:"issue_type_label,omitempty"`
+	HandoffCommentID   int64          `json:"handoff_comment_id,omitempty"`
+	HandoffPosted      bool           `json:"handoff_posted,omitempty"`
+	Traces             []SessionTrace `json:"traces,omitempty"`
+	IssueLabeled       bool           `json:"issue_labeled,omitempty"`
+	IssueClosed        bool           `json:"issue_closed,omitempty"`
+	Worker             *WorkerState   `json:"worker,omitempty"`
+	UpdatedAt          time.Time      `json:"updated_at"`
 
 	LLMCalls            int64     `json:"llm_calls,omitempty"`
 	LLMPromptTokens     int64     `json:"llm_prompt_tokens,omitempty"`
@@ -65,6 +66,13 @@ type SessionState struct {
 	LLMLastCallAt       time.Time `json:"llm_last_call_at,omitempty"`
 	ContextCompactions  int       `json:"context_compactions,omitempty"`
 	LastCompactionAt    time.Time `json:"last_compaction_at,omitempty"`
+}
+
+type SessionTrace struct {
+	TraceID   string    `json:"trace_id"`
+	SpanID    string    `json:"span_id"`
+	Operation string    `json:"operation"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 type Message struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,6 +18,7 @@ import (
 type Agent struct {
 	cfg         *Config
 	client      *Client
+	telemetry   *Telemetry
 	tools       map[string]Tool
 	skillsBlock string
 	sessions    map[int]*Session
@@ -398,7 +400,12 @@ func (a *Agent) runSession(session *Session) {
 	}
 	messages = append(messages, history...)
 
-	response, record, err := a.client.ChatDetailed(messages)
+	turnCtx, turnSpan := a.startTurn(context.Background())
+	if turnSpan != nil {
+		recordTrace(&state, turnSpan.SpanContext(), "invoke_agent")
+		defer turnSpan.End()
+	}
+	turnCtx, response, record, err := a.client.ChatDetailedContext(turnCtx, messages)
 	if err := session.AppendLLMCall(record); err != nil {
 		log.Printf("append llm call session %d: %v", session.IssueNumber, err)
 	}
@@ -434,7 +441,13 @@ func (a *Agent) runSession(session *Session) {
 			ToolCalls:        toolCalls,
 		})
 		for _, call := range toolCalls {
+			toolCtx, toolSpan := a.startTool(turnCtx, call.Function.Name)
 			result := a.executeToolCall(session, call)
+			if toolSpan != nil {
+				finishToolSpan(toolSpan, result)
+				_ = toolCtx
+				toolSpan.End()
+			}
 			result.Stdout = a.redact(result.Stdout)
 			result.Stderr = a.redact(result.Stderr)
 			result.Error = a.redact(result.Error)
