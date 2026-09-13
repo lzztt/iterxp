@@ -100,23 +100,59 @@ func loadConfig() Config {
 
 const usageText = `iterxp-agent-v2 [flags]
 
-The IterXP v2 agent polls open GitHub issues and works on one issue at a time.
+The IterXP v2 agent runs in two modes:
+
+  No --issue flag:      dispatcher. Polls open GitHub issues and comments,
+                        appends new input to per-issue sessions, and prepares
+                        per-issue worktrees. It does not execute model/tool steps.
+  --issue N:            issue worker. Loads only issue N's session and worktree,
+                        executes that session's pending steps, then exits.
 
 Flags:
   -h, --help    Show this help and exit.
+  --issue N     Run the issue worker for issue N (N > 0).
+  --issue=N     Equivalent to --issue N.
 `
 
-func parseArgs(args []string) (help bool, err error) {
-	for _, arg := range args {
+func parseArgs(args []string) (help bool, issueNumber int, err error) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		if arg == "-h" || arg == "--help" {
-			return true, nil
+			return true, 0, nil
+		}
+		if arg == "--issue" {
+			if i+1 >= len(args) {
+				return false, 0, fmt.Errorf("--issue requires a positive issue number")
+			}
+			n, convErr := strconv.Atoi(args[i+1])
+			if convErr != nil || n <= 0 {
+				return false, 0, fmt.Errorf("invalid issue number: %s", args[i+1])
+			}
+			if issueNumber != 0 {
+				return false, 0, fmt.Errorf("--issue specified multiple times")
+			}
+			issueNumber = n
+			i++
+			continue
+		}
+		if strings.HasPrefix(arg, "--issue=") {
+			value := strings.TrimPrefix(arg, "--issue=")
+			n, convErr := strconv.Atoi(value)
+			if convErr != nil || n <= 0 {
+				return false, 0, fmt.Errorf("invalid issue number: %s", value)
+			}
+			if issueNumber != 0 {
+				return false, 0, fmt.Errorf("--issue specified multiple times")
+			}
+			issueNumber = n
+			continue
 		}
 		if strings.HasPrefix(arg, "-") {
-			return false, fmt.Errorf("unknown flag: %s", arg)
+			return false, 0, fmt.Errorf("unknown flag: %s", arg)
 		}
-		return false, fmt.Errorf("unexpected argument: %s", arg)
+		return false, 0, fmt.Errorf("unexpected argument: %s", arg)
 	}
-	return false, nil
+	return false, issueNumber, nil
 }
 
 func acquireWorkerLock(configDir string) (func(), error) {
@@ -180,7 +216,7 @@ func runSmokeTest(cfg Config, marker string) error {
 }
 
 func runCLI(args []string, stdout, stderr io.Writer) int {
-	help, err := parseArgs(args)
+	help, issueNumber, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "iterxp-agent-v2: %v\n", err)
 		return 2
@@ -218,6 +254,10 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	if issueNumber > 0 {
+		return runIssueWorker(cfg, issueNumber)
+	}
+
 	unlock, err := acquireWorkerLock(cfg.ConfigDir)
 	if err != nil {
 		log.Printf("%v", err)
@@ -230,8 +270,81 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		log.Fatal(err)
 	}
 	agent := NewAgent(&cfg, client)
-	log.Printf("iterxp-v2 started: model=%s reason=%s maxTokens=%d inferenceTimeout=%s sessions=%s", cfg.Model, cfg.Reasoning, cfg.MaxTokens, cfg.InferenceTimeout, cfg.SessionDir)
-	agent.Run()
+	log.Printf("iterxp-v2 dispatcher started: model=%s reason=%s maxTokens=%d inferenceTimeout=%s sessions=%s", cfg.Model, cfg.Reasoning, cfg.MaxTokens, cfg.InferenceTimeout, cfg.SessionDir)
+	agent.RunDispatcher()
+	return 0
+}
+
+func workerVersion() string {
+	path, err := os.Executable()
+	if err != nil {
+		return promptVersion + "-unknown-path"
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return promptVersion + "-unreadable"
+	}
+	return promptVersion + "-" + hashString(string(data))[:12]
+}
+
+func runIssueWorker(cfg Config, issueNumber int) int {
+	session, err := NewSession(Issue{Number: issueNumber}, cfg.SessionDir)
+	if err != nil {
+		log.Printf("create issue %d session: %v", issueNumber, err)
+		return 1
+	}
+
+	client, err := NewClient(cfg)
+	if err != nil {
+		log.Printf("create issue %d client: %v", issueNumber, err)
+		return 1
+	}
+
+	unlock, err := acquireSessionWorkerLock(session)
+	if err != nil {
+		log.Printf("issue %d worker already active: %v", issueNumber, err)
+		return 0
+	}
+	defer unlock()
+
+	if err := ensureWorktree(cfg, session); err != nil {
+		log.Printf("issue %d worktree setup: %v", issueNumber, err)
+		return 1
+	}
+
+	agent := NewIssueAgent(&cfg, client, session)
+	version := workerVersion()
+	if err := updateWorkerState(session, version, "starting", "", time.Time{}); err != nil {
+		log.Printf("issue %d write worker state: %v", issueNumber, err)
+		return 1
+	}
+	keepWorkerStatus := false
+	defer func() {
+		if !keepWorkerStatus {
+			_ = clearWorkerState(session)
+		}
+	}()
+
+	for sessionHasPendingWork(session) {
+		if err := ensureWorktree(cfg, session); err != nil {
+			log.Printf("issue %d worktree refresh: %v", issueNumber, err)
+			return 1
+		}
+		deadline := time.Now().Add(cfg.ToolTimeout + 2*time.Minute)
+		if err := updateWorkerState(session, version, "working", "model-tool-step", deadline); err != nil {
+			log.Printf("issue %d heartbeat: %v", issueNumber, err)
+		}
+		agent.runSession(session)
+		if sessionHasPendingWork(session) {
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+	if err := updateWorkerState(session, version, "idle", "", time.Time{}); err != nil {
+		log.Printf("issue %d persist idle status: %v", issueNumber, err)
+	}
+	keepWorkerStatus = true
+	log.Printf("issue %d worker finished", issueNumber)
 	return 0
 }
 

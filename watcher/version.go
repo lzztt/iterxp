@@ -20,11 +20,13 @@ type Config struct {
 	AgentPath       string
 	LastGoodPath    string
 	StatePath       string
+	SessionDir      string
 	PollInterval    time.Duration
 	StableWindow    time.Duration
 	StartTimeout    time.Duration
 	SmokeTimeout    time.Duration
 	MaxFailures     int
+	MaxWorkers      int
 }
 
 func getenv(key, fallback string) string {
@@ -72,11 +74,13 @@ func loadConfig() Config {
 		AgentPath:       getenv("ITERXP_AGENT_BIN", filepath.Join(repoDir, "iterxp-agent-v2")),
 		LastGoodPath:    getenv("ITERXP_LAST_GOOD_BIN", filepath.Join(repoDir, "iterxp-agent-v2.last_good")),
 		StatePath:       getenv("ITERXP_WATCHER_STATE", filepath.Join(configDir, "watcher_state.json")),
+		SessionDir:      getenv("ITERXP_WATCHER_SESSION_DIR", filepath.Join(configDir, "sessions")),
 		PollInterval:    getenvDuration("ITERXP_WATCHER_POLL_INTERVAL", 5*time.Second),
 		StableWindow:    getenvDuration("ITERXP_WATCHER_STABLE_WINDOW", 30*time.Second),
 		StartTimeout:    getenvDuration("ITERXP_WATCHER_START_TIMEOUT", 10*time.Second),
 		SmokeTimeout:    getenvDuration("ITERXP_WATCHER_SMOKE_TIMEOUT", 15*time.Second),
 		MaxFailures:     getenvInt("ITERXP_WATCHER_MAX_FAILURES", 3),
+		MaxWorkers:      getenvInt("ITERXP_MAX_WORKERS", 2),
 	}
 }
 

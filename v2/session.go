@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -180,4 +183,103 @@ func (s *Session) ReadPlan() (string, error) {
 
 func (s *Session) WritePlan(plan string) error {
 	return os.WriteFile(s.PlanPath, []byte(plan), 0600)
+}
+
+func acquireSessionWorkerLock(session *Session) (func(), error) {
+	if session == nil {
+		return nil, fmt.Errorf("nil session")
+	}
+	lockPath := filepath.Join(session.Dir, "worker.lock")
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("session %s is already owned by another worker: %w", session.Dir, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+	}, nil
+}
+
+func processStartIdentity(pid int) string {
+	data, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "stat"))
+	if err != nil {
+		return ""
+	}
+	text := string(data)
+	idx := strings.LastIndex(text, ")")
+	if idx < 0 || idx+2 >= len(text) {
+		return ""
+	}
+	fields := strings.Fields(text[idx+2:])
+	if len(fields) < 20 {
+		return ""
+	}
+	return fields[19]
+}
+
+func updateWorkerState(session *Session, version, status, operation string, deadline time.Time) error {
+	if session == nil {
+		return fmt.Errorf("nil session")
+	}
+	st, err := session.LoadState()
+	if err != nil {
+		return err
+	}
+	now := time.Now()
+	if st.Worker == nil {
+		st.Worker = &WorkerState{StartedAt: now}
+	}
+	if st.Worker.StartedAt.IsZero() {
+		st.Worker.StartedAt = now
+	}
+	st.Worker.PID = os.Getpid()
+	st.Worker.ProcessStart = processStartIdentity(os.Getpid())
+	st.Worker.Version = version
+	st.Worker.Status = status
+	st.Worker.Operation = operation
+	st.Worker.Deadline = deadline
+	st.Worker.LastHeartbeat = now
+	return session.SaveState(st)
+}
+
+func clearWorkerState(session *Session) error {
+	if session == nil {
+		return fmt.Errorf("nil session")
+	}
+	st, err := session.LoadState()
+	if err != nil {
+		return err
+	}
+	st.Worker = nil
+	return session.SaveState(st)
+}
+
+func sessionHasPendingWork(session *Session) bool {
+	if session == nil {
+		return false
+	}
+	st, err := session.LoadState()
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(session.ContextPath)
+	if err != nil {
+		return false
+	}
+	text := string(data)
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	h := hashString(text)
+	if st.PendingContextHash != "" {
+		return true
+	}
+	if st.ContextHash != h {
+		return true
+	}
+	return false
 }
