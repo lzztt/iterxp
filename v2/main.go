@@ -21,6 +21,9 @@ type Config struct {
 	InferenceTimeout        time.Duration
 	APIBase                 string
 	ProjectHeader           string
+	OTLPTracesEndpoint      string
+	WandbEntity             string
+	WandbProject            string
 	HomeDir                 string
 	RepoDir                 string
 	ConfigDir               string
@@ -70,6 +73,60 @@ func getenvDuration(key string, fallback time.Duration) time.Duration {
 	return d
 }
 
+// agentEnvFileDir derives the directory holding agent.env, allowing tests to
+// isolate the fallback file via ITERPXP_CONFIG_DIR.
+func agentEnvFileDir() string {
+	base := getenv("ITERXP_CONFIG_DIR", "")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			base = filepath.Join(home, ".iterxp_v2")
+		}
+	}
+	return base
+}
+
+// agentEnvFallback resolves values from the deploy-time agent.env file, keeping
+// task/session authority local. Process environment always wins. This is what
+// lets the watcher-launched workers inherit telemetry configuration without an
+// interactive shell.
+func agentEnvFallback(key string) string {
+	dir := agentEnvFileDir()
+	if dir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "agent.env"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(k), key) {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+// getenvOrAgent returns the process env value for key, then the agent.env file
+// value, then fallback.
+func getenvOrAgent(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	if v := agentEnvFallback(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
 func loadConfig() Config {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -85,6 +142,9 @@ func loadConfig() Config {
 		InferenceTimeout:        getenvDuration("ITERXP_INFERENCE_TIMEOUT", 300*time.Second),
 		APIBase:                 getenv("ITERXP_WANDB_API", "https://api.inference.wandb.ai/v1/chat/completions"),
 		ProjectHeader:           getenv("ITERXP_PROJECT_HEADER", "OpenAI-Project: longti/inference"),
+		OTLPTracesEndpoint:      strings.TrimSpace(getenvOrAgent("ITERXP_OTLP_TRACES_ENDPOINT", "")),
+		WandbEntity:             strings.TrimSpace(getenvOrAgent("ITERXP_WANDB_ENTITY", "")),
+		WandbProject:            strings.TrimSpace(getenvOrAgent("ITERXP_WANDB_PROJECT", "")),
 		HomeDir:                 home,
 		RepoDir:                 getenv("ITERXP_REPO_DIR", filepath.Join(home, "iterxp")),
 		ConfigDir:               base,
@@ -315,6 +375,15 @@ func runIssueWorker(cfg Config, issueNumber int) int {
 	}
 
 	agent := NewIssueAgent(&cfg, client, session)
+
+	if telemetry, telErr := initWorkerTelemetry(cfg, client, session, workerVersion()); telErr != nil {
+		log.Printf("issue %d telemetry init: %v", issueNumber, telErr)
+	} else if telemetry != nil {
+		defer telemetryShutdown(telemetry)
+		agent.telemetry = telemetry
+		client.telemetry = telemetry
+	}
+
 	version := workerVersion()
 	if err := updateWorkerState(session, version, "starting", "", time.Time{}); err != nil {
 		log.Printf("issue %d write worker state: %v", issueNumber, err)

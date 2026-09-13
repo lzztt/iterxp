@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,10 +14,11 @@ import (
 )
 
 type Client struct {
-	cfg    Config
-	tokens map[string]string
-	redact []string
-	http   *http.Client
+	cfg       Config
+	tokens    map[string]string
+	telemetry *Telemetry
+	redact    []string
+	http      *http.Client
 }
 
 func NewClient(cfg Config) (*Client, error) {
@@ -94,11 +96,17 @@ func (c *Client) fetchJSON(url string, out interface{}) error {
 }
 
 func (c *Client) ChatDetailed(messages []Message) (*ChatResponse, LLMCallRecord, error) {
+	_, resp, record, err := c.ChatDetailedContext(context.Background(), messages)
+	return resp, record, err
+}
+
+func (c *Client) ChatDetailedContext(ctx context.Context, messages []Message) (context.Context, *ChatResponse, LLMCallRecord, error) {
 	start := time.Now()
 	record := LLMCallRecord{
 		Timestamp: start.UTC(),
 		Model:     c.cfg.Model,
 	}
+	tctx, chatSpan := c.startChat(ctx, c.cfg.Model)
 	payload := ChatRequest{
 		Model:           c.cfg.Model,
 		MaxTokens:       c.cfg.MaxTokens,
@@ -106,19 +114,26 @@ func (c *Client) ChatDetailed(messages []Message) (*ChatResponse, LLMCallRecord,
 		Messages:        messages,
 		Tools:           builtinToolDefinitions(),
 	}
+	if chatSpan != nil {
+		defer func() {
+			finishChatSpan(chatSpan, record)
+			chatSpan.End()
+		}()
+	}
+	_ = tctx
 	data, err := c.apiCall("POST", c.cfg.APIBase, c.tokens["wandb"], payload, map[string]string{
 		"OpenAI-Project": strings.TrimSpace(strings.TrimPrefix(c.cfg.ProjectHeader, "OpenAI-Project:")),
 	})
 	if err != nil {
 		record.DurationMS = time.Since(start).Milliseconds()
 		record.Error = c.Redact(err.Error())
-		return nil, record, err
+		return tctx, nil, record, err
 	}
 	var resp ChatResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		record.DurationMS = time.Since(start).Milliseconds()
 		record.Error = c.Redact(err.Error())
-		return nil, record, err
+		return tctx, nil, record, err
 	}
 	record.DurationMS = time.Since(start).Milliseconds()
 	record.PromptTokens = resp.Usage.PromptTokens
@@ -127,7 +142,7 @@ func (c *Client) ChatDetailed(messages []Message) (*ChatResponse, LLMCallRecord,
 	if len(resp.Choices) > 0 {
 		record.FinishReason = resp.Choices[0].FinishReason
 	}
-	return &resp, record, nil
+	return tctx, &resp, record, nil
 }
 
 func (c *Client) Chat(messages []Message) (*ChatResponse, error) {
