@@ -48,23 +48,33 @@ type SessionState struct {
 }
 
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	Refusal          string     `json:"refusal,omitempty"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
+	Name             string     `json:"name,omitempty"`
 }
 
 type ChatRequest struct {
-	Model           string    `json:"model"`
-	MaxTokens       int       `json:"max_tokens"`
-	ReasoningEffort string    `json:"reasoning_effort"`
-	Messages        []Message `json:"messages"`
+	Model           string           `json:"model"`
+	MaxTokens       int              `json:"max_tokens"`
+	ReasoningEffort string           `json:"reasoning_effort"`
+	Messages        []Message        `json:"messages"`
+	Tools           []ToolDefinition `json:"tools,omitempty"`
 }
 
 type ChatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content   string          `json:"content"`
-			Refusal   string          `json:"refusal"`
-			ToolCalls json.RawMessage `json:"tool_calls"`
+			Role             string     `json:"role"`
+			Content          string     `json:"content"`
+			Refusal          string     `json:"refusal"`
+			ReasoningContent string     `json:"reasoning_content,omitempty"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
+			ToolCallID       string     `json:"tool_call_id,omitempty"`
+			Name             string     `json:"name,omitempty"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
