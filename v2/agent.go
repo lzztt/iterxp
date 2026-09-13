@@ -368,13 +368,21 @@ func (a *Agent) runSession(session *Session) {
 	log.Printf("session %d exit_code=%d", session.IssueNumber, exitCode)
 }
 
+func (a *Agent) workDir(session *Session) string {
+	if a.cfg != nil && a.cfg.RepoDir != "" {
+		return a.cfg.RepoDir
+	}
+	return session.Dir
+}
+
 func (a *Agent) runBash(command string, session *Session) (string, string, int) {
 	toolPath := filepath.Join(session.Dir, "tool.sh")
 	if err := os.WriteFile(toolPath, []byte(command+"\n"), 0700); err != nil {
 		return "", err.Error(), -1
 	}
 	cmd := exec.Command("bash", toolPath)
-	cmd.Dir = session.Dir
+	cmd.Dir = a.workDir(session)
+	cmd.Env = append(os.Environ(), "ITERXP_SESSION_DIR="+session.Dir)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -411,7 +419,8 @@ func (a *Agent) runTool(command string, session *Session) (string, string, int) 
 		}
 	}
 	cmd := exec.Command(tool.Path, args...)
-	cmd.Dir = session.Dir
+	cmd.Dir = a.workDir(session)
+	cmd.Env = append(os.Environ(), "ITERXP_SESSION_DIR="+session.Dir)
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

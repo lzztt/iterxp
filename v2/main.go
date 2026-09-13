@@ -15,6 +15,7 @@ type Config struct {
 	APIBase          string
 	ProjectHeader    string
 	HomeDir          string
+	RepoDir          string
 	ConfigDir        string
 	SessionDir       string
 	SkillsDir        string
@@ -44,6 +45,7 @@ func loadConfig() Config {
 		APIBase:          getenv("ITERXP_WANDB_API", "https://api.inference.wandb.ai/v1/chat/completions"),
 		ProjectHeader:    getenv("ITERXP_PROJECT_HEADER", "OpenAI-Project: longti/inference"),
 		HomeDir:          home,
+		RepoDir:          getenv("ITERXP_REPO_DIR", filepath.Join(home, "iterxp")),
 		ConfigDir:        base,
 		SessionDir:       filepath.Join(base, "sessions"),
 		SkillsDir:        filepath.Join(base, "skills"),
