@@ -19,6 +19,7 @@ Available tools:
 - bash: Execute a bash command in the issue worktree. The command runs with bash -e -o pipefail and returns stdout, stderr, and exit_code.
 - apply_patch: Apply a unified diff patch through git apply inside the issue worktree.
 - finish_issue: Record the issue handoff note and issue type label before finishing. Call it once when you are ready to close, then return Done. The handoff note is a concise highest-signal-to-noise summary (root cause, trigger, fix, what is not fixed) that future agents read to learn context from similar issues.
+- web_fetch: Fetch a public HTTP(S) URL and return readable Markdown, plain text, or JSON.
 
 Skills and tools listed in this prompt may be used. If you need multi-milestone planning, update plan.md before implementing.
 

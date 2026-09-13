@@ -91,14 +91,14 @@ func newStructuredAgent(t *testing.T, respond func(int) (int, string), inspect f
 
 func TestBuiltinToolDefinitionsIncludeStructuredSchemas(t *testing.T) {
 	defs := builtinToolDefinitions()
-	if len(defs) != 3 {
-		t.Fatalf("tool definitions = %d, want 3", len(defs))
+	if len(defs) != 4 {
+		t.Fatalf("tool definitions = %d, want 4", len(defs))
 	}
 	byName := map[string]ToolDefinition{}
 	for _, def := range defs {
 		byName[def.Function.Name] = def
 	}
-	for _, name := range []string{"bash", "apply_patch", "finish_issue"} {
+	for _, name := range []string{"bash", "apply_patch", "finish_issue", "web_fetch"} {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("missing tool definition %q", name)
 		}
@@ -117,6 +117,11 @@ func TestBuiltinToolDefinitionsIncludeStructuredSchemas(t *testing.T) {
 	required = finishIssue.Function.Parameters["required"].([]string)
 	if len(required) != 2 || required[0] != "handoff_note" || required[1] != "issue_type_label" {
 		t.Fatalf("finish_issue required = %v, want [handoff_note issue_type_label]", required)
+	}
+	fetch := byName["web_fetch"]
+	required = fetch.Function.Parameters["required"].([]string)
+	if len(required) != 1 || required[0] != "url" {
+		t.Fatalf("web_fetch required = %v, want [url]", required)
 	}
 }
 
@@ -158,14 +163,14 @@ func TestStructuredToolRoundTripAndResumeHistory(t *testing.T) {
 	}
 	first := requests[0]
 	mu.Unlock()
-	if len(first.Tools) != 3 {
-		t.Fatalf("first request tools = %d, want 3", len(first.Tools))
+	if len(first.Tools) != 4 {
+		t.Fatalf("first request tools = %d, want 4", len(first.Tools))
 	}
 	toolNames := map[string]bool{}
 	for _, tool := range first.Tools {
 		toolNames[tool.Function.Name] = true
 	}
-	if !toolNames["bash"] || !toolNames["apply_patch"] || !toolNames["finish_issue"] {
+	if !toolNames["bash"] || !toolNames["apply_patch"] || !toolNames["finish_issue"] || !toolNames["web_fetch"] {
 		t.Fatalf("first request tool names = %v", toolNames)
 	}
 
