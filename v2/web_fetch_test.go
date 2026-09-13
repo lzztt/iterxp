@@ -113,6 +113,9 @@ func TestHTMLToReadableMarkdownConvertsAndResolvesRelativeLinks(t *testing.T) {
 	if !strings.Contains(got, "[absolute link](https://example.com/abs)") {
 		t.Fatalf("absolute link not preserved: %s", got)
 	}
+	if strings.Contains(got, "Home") {
+		t.Fatalf("navigation boilerplate was not removed: %s", got)
+	}
 }
 
 func TestWebFetchResultForNon2xxReportsStatus(t *testing.T) {
