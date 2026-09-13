@@ -355,16 +355,6 @@ func (a *Agent) runSession(session *Session) {
 		return
 	}
 
-	newData, err := os.ReadFile(session.ContextPath)
-	if err != nil {
-		log.Printf("read context after step %d: %v", session.IssueNumber, err)
-		return
-	}
-	state.ContextHash = hashString(string(newData))
-	state.Done = false
-	if err := session.SaveState(state); err != nil {
-		log.Printf("save state after step %d: %v", session.IssueNumber, err)
-	}
 	log.Printf("session %d exit_code=%d", session.IssueNumber, exitCode)
 }
 
