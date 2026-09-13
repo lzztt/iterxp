@@ -126,7 +126,7 @@ func startAgent(cfg Config) (*procInfo, error) {
 
 	cmd := exec.Command(cfg.AgentPath)
 	cmd.Dir = cfg.RepoDir
-	cmd.Env = os.Environ()
+	cmd.Env = watcherIdentityEnv(os.Environ(), cfg.GitName, cfg.GitEmail)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

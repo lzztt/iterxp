@@ -142,3 +142,22 @@ func TestHashSourceChangesWhenFilesChange(t *testing.T) {
 		t.Fatalf("source hash did not change after file change: %s", h1)
 	}
 }
+
+func TestLoadConfigGitIdentityDefaultsAndOverride(t *testing.T) {
+	repoDir := t.TempDir()
+	t.Setenv("ITERXP_REPO_DIR", repoDir)
+	t.Setenv("ITERXP_GIT_NAME", "")
+	t.Setenv("ITERXP_GIT_EMAIL", "")
+
+	cfg := loadConfig()
+	if cfg.GitName != "IterXP Agent" || cfg.GitEmail != "agent@iterxp.com" {
+		t.Fatalf("default identity = %q <%s>, want IterXP Agent <agent@iterxp.com>", cfg.GitName, cfg.GitEmail)
+	}
+
+	t.Setenv("ITERXP_GIT_NAME", "Custom Agent")
+	t.Setenv("ITERXP_GIT_EMAIL", "custom@example.com")
+	cfg = loadConfig()
+	if cfg.GitName != "Custom Agent" || cfg.GitEmail != "custom@example.com" {
+		t.Fatalf("overridden identity = %q <%s>, want Custom Agent <custom@example.com>", cfg.GitName, cfg.GitEmail)
+	}
+}

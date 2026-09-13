@@ -34,6 +34,8 @@ type Config struct {
 	ToolTimeout             time.Duration
 	KillTimeout             time.Duration
 	RetryDelay              time.Duration
+	GitName                 string
+	GitEmail                string
 }
 
 func getenv(key, fallback string) string {
@@ -95,6 +97,8 @@ func loadConfig() Config {
 		ToolTimeout:             getenvDuration("ITERXP_TOOL_TIMEOUT", 2*time.Minute),
 		KillTimeout:             getenvDuration("ITERXP_KILL_TIMEOUT", 5*time.Second),
 		RetryDelay:              getenvDuration("ITERXP_RETRY_DELAY", 5*time.Second),
+		GitName:                 getenv("ITERXP_GIT_NAME", "IterXP Agent"),
+		GitEmail:                getenv("ITERXP_GIT_EMAIL", "agent@iterxp.com"),
 	}
 }
 
@@ -241,6 +245,9 @@ func runCLI(args []string, stdout, stderr io.Writer) int {
 		if err := os.MkdirAll(dir, 0700); err != nil {
 			log.Fatal(err)
 		}
+	}
+	if err := ensureRepoGitIdentity(cfg); err != nil {
+		log.Printf("configure repo git identity: %v", err)
 	}
 	needsPromptWrite := false
 	if data, err := os.ReadFile(cfg.SystemPromptFile); err != nil {

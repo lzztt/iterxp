@@ -130,3 +130,23 @@ func TestChatRequestCarriesConfiguredMaxTokens(t *testing.T) {
 		t.Fatalf("ChatRequest MaxTokens = %d, want override 45678", got.MaxTokens)
 	}
 }
+
+func TestLoadConfigGitIdentityDefaultsAndOverride(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("HOME", base)
+	t.Setenv("ITERXP_CONFIG_DIR", filepath.Join(base, ".iterxp_v2"))
+	t.Setenv("ITERXP_GIT_NAME", "")
+	t.Setenv("ITERXP_GIT_EMAIL", "")
+
+	cfg := loadConfig()
+	if cfg.GitName != "IterXP Agent" || cfg.GitEmail != "agent@iterxp.com" {
+		t.Fatalf("default identity = %q <%s>, want IterXP Agent <agent@iterxp.com>", cfg.GitName, cfg.GitEmail)
+	}
+
+	t.Setenv("ITERXP_GIT_NAME", "Custom Agent")
+	t.Setenv("ITERXP_GIT_EMAIL", "custom@example.com")
+	cfg = loadConfig()
+	if cfg.GitName != "Custom Agent" || cfg.GitEmail != "custom@example.com" {
+		t.Fatalf("overridden identity = %q <%s>, want Custom Agent <custom@example.com>", cfg.GitName, cfg.GitEmail)
+	}
+}

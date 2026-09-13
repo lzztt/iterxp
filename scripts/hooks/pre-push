@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# IterXP git identity pre-push guard.
+# Checks every commit that would newly reach the remote and rejects pushes whose
+# author or committer differ from the configured IterXP identity.
+set -euo pipefail
+
+name="${ITERXP_GIT_NAME:-}"
+email="${ITERXP_GIT_EMAIL:-}"
+if [ -z "$name" ]; then
+  name="IterXP Agent"
+fi
+if [ -z "$email" ]; then
+  email="agent@iterxp.com"
+fi
+
+zero="0000000000000000000000000000000000000000"
+status=0
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "$local_ref" ] || continue
+  # Branch deletion: nothing to verify.
+  if [ "$local_sha" = "$zero" ]; then
+    continue
+  fi
+  if [ "$remote_sha" = "$zero" ]; then
+    # New ref: verify all history.
+    range="$local_sha"
+  elif git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+    range="$remote_sha..$local_sha"
+  else
+    # Rewritten/forced history: verify all reachable commits.
+    range="$local_sha"
+  fi
+
+  commits="$(git rev-list "$range" 2>/dev/null || true)"
+  [ -z "$commits" ] && continue
+
+  while read -r sha; do
+    [ -n "$sha" ] || continue
+    aname="$(git show -s --format=%an "$sha")"
+    aemail="$(git show -s --format=%ae "$sha")"
+    cname="$(git show -s --format=%cn "$sha")"
+    cemail="$(git show -s --format=%ce "$sha")"
+    if [ "$aname" != "$name" ] || [ "$aemail" != "$email" ] || [ "$cname" != "$name" ] || [ "$cemail" != "$email" ]; then
+      echo "pre-push: commit $sha on $local_ref does not use the configured IterXP identity" >&2
+      echo "  expected:   $name <$email>" >&2
+      echo "  author:     $aname <$aemail>" >&2
+      echo "  committer:  $cname <$cemail>" >&2
+      status=1
+    fi
+  done <<< "$commits"
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "pre-push: rejecting push because of author/committer identity mismatches" >&2
+  exit 1
+fi
+exit 0

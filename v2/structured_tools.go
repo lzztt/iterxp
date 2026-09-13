@@ -162,9 +162,13 @@ func (a *Agent) runCommandInput(name string, args []string, dir string, extraEnv
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	var gitName, gitEmail = defaultGitName, defaultGitEmail
+	if a != nil && a.cfg != nil {
+		gitName, gitEmail = resolvedGitIdentity(a.cfg.GitName, a.cfg.GitEmail)
+	}
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = withGitIdentityEnv(os.Environ(), extraEnv, gitName, gitEmail)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Stdout = stdoutFile

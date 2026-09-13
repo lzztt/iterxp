@@ -27,6 +27,8 @@ type Config struct {
 	SmokeTimeout    time.Duration
 	MaxFailures     int
 	MaxWorkers      int
+	GitName         string
+	GitEmail        string
 }
 
 func getenv(key, fallback string) string {
@@ -81,6 +83,8 @@ func loadConfig() Config {
 		SmokeTimeout:    getenvDuration("ITERXP_WATCHER_SMOKE_TIMEOUT", 15*time.Second),
 		MaxFailures:     getenvInt("ITERXP_WATCHER_MAX_FAILURES", 3),
 		MaxWorkers:      getenvInt("ITERXP_MAX_WORKERS", 2),
+		GitName:         getenv("ITERXP_GIT_NAME", "IterXP Agent"),
+		GitEmail:        getenv("ITERXP_GIT_EMAIL", "agent@iterxp.com"),
 	}
 }
 
