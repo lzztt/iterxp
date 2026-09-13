@@ -9,31 +9,32 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 )
 
-type ChatMessage struct {
-	Role      string          `json:"role"`
-	Content   string          `json:"content,omitempty"`
-	Refusal   string          `json:"refusal,omitempty"`
-	ToolCalls json.RawMessage `json:"tool_calls,omitempty"`
+type Message struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
 }
 
 type ChatRequest struct {
-	Model           string        `json:"model"`
-	MaxTokens       int           `json:"max_tokens"`
-	ReasoningEffort string        `json:"reasoning_effort"`
-	Messages        []ChatMessage `json:"messages"`
+	Model           string    `json:"model"`
+	MaxTokens       int       `json:"max_tokens"`
+	ReasoningEffort string    `json:"reasoning_effort"`
+	Messages        []Message `json:"messages"`
 }
 
 type ChatResponse struct {
 	Choices []struct {
-		Message      ChatMessage `json:"message"`
-		FinishReason string      `json:"finish_reason"`
+		Message struct {
+			Content   string          `json:"content"`
+			Refusal   string          `json:"refusal"`
+			ToolCalls json.RawMessage `json:"tool_calls"`
+		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		CompletionTokens int `json:"completion_tokens"`
@@ -44,30 +45,24 @@ type Issue struct {
 	ID          int64           `json:"id"`
 	Number      int             `json:"number"`
 	Title       string          `json:"title"`
-	Body        string          `json:"body"`
 	HTMLURL     string          `json:"html_url"`
+	Body        string          `json:"body"`
 	PullRequest json.RawMessage `json:"pull_request"`
 }
 
-type IssueComment struct {
-	ID       int64  `json:"id"`
-	Body     string `json:"body"`
-	HTMLURL  string `json:"html_url"`
-	IssueURL string `json:"issue_url"`
-	User     struct {
+type Comment struct {
+	ID      int64  `json:"id"`
+	HTMLURL string `json:"html_url"`
+	Body    string `json:"body"`
+	User    struct {
 		Login string `json:"login"`
 	} `json:"user"`
 }
 
-type AgentState struct {
-	SeenIssues   map[int64]bool `json:"seen_issues"`
-	SeenComments map[int64]bool `json:"seen_comments"`
-}
-
 var (
 	homeDir       string
+	contextPath   string
 	toolPath      string
-	statePath     string
 	tokens        map[string]string
 	redactStrings []string
 	repo          = "lzztt/iterxp"
@@ -76,11 +71,11 @@ var (
 	httpClient    = &http.Client{Timeout: 60 * time.Second}
 )
 
-const systemPrompt = `You are IterXP, a self-building agent controlled by /home/admin/seed.py.
+const systemPrompt = `You are IterXP, a self-building agent controlled by /home/admin/iterxp/main.go.
 Return only the next small Bash step, not a complete solution to the whole task.
 Your response is saved as tool.sh and executed; stdout, stderr, and exit code
 will appear in the next context so you can choose the following step.
-Inspect files through Bash when needed, including seed.py itself.
+Inspect files through Bash when needed, including ~/seed.py and main.go.
 Output Bash only, without Markdown fences. Output exactly Done when finished.
 Credentials are in ~/token; never reveal their values.`
 
@@ -96,6 +91,17 @@ func redact(s string) string {
 		s = strings.ReplaceAll(s, t, "[REDACTED]")
 	}
 	return s
+}
+
+func appendText(text string) {
+	f, err := os.OpenFile(contextPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := io.WriteString(f, redact(text)+"\n"); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func apiCall(method, url, key string, payload interface{}, headers map[string]string) ([]byte, error) {
@@ -139,96 +145,12 @@ func fetchJSON(url, key string, out interface{}) error {
 	return json.Unmarshal(data, out)
 }
 
-func loadState(path string) *AgentState {
-	st := &AgentState{
-		SeenIssues:   map[int64]bool{},
-		SeenComments: map[int64]bool{},
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return st
-	}
-	if err := json.Unmarshal(data, st); err == nil {
-		if st.SeenIssues == nil {
-			st.SeenIssues = map[int64]bool{}
-		}
-		if st.SeenComments == nil {
-			st.SeenComments = map[int64]bool{}
-		}
-	}
-	return st
-}
-
-func saveState(path string, st *AgentState) {
-	data, err := json.MarshalIndent(st, "", "  ")
-	if err != nil {
-		log.Printf("marshal state: %v", err)
-		return
-	}
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		log.Printf("write state: %v", err)
-	}
-}
-
-func pollGitHub(messages *[]ChatMessage, st *AgentState) bool {
-	added := false
-
-	for page := 1; page <= 5; page++ {
-		url := fmt.Sprintf("https://api.github.com/repos/%s/issues?state=all&per_page=50&sort=updated&direction=desc&page=%d", repo, page)
-		var issues []Issue
-		if err := fetchJSON(url, tokens["github"], &issues); err != nil {
-			log.Printf("GitHub issues error: %v", err)
-			break
-		}
-		for _, iss := range issues {
-			if len(iss.PullRequest) > 0 || st.SeenIssues[iss.ID] {
-				continue
-			}
-			st.SeenIssues[iss.ID] = true
-			content := fmt.Sprintf("Issue #%d: %s\n%s\n%s", iss.Number, iss.Title, iss.HTMLURL, iss.Body)
-			*messages = append(*messages, ChatMessage{Role: "user", Content: redact(content)})
-			added = true
-		}
-		if len(issues) < 50 {
-			break
-		}
-	}
-
-	for page := 1; page <= 5; page++ {
-		url := fmt.Sprintf("https://api.github.com/repos/%s/issues/comments?per_page=50&sort=created&direction=desc&page=%d", repo, page)
-		var comments []IssueComment
-		if err := fetchJSON(url, tokens["github"], &comments); err != nil {
-			log.Printf("GitHub comments error: %v", err)
-			break
-		}
-		for _, c := range comments {
-			if st.SeenComments[c.ID] {
-				continue
-			}
-			st.SeenComments[c.ID] = true
-			issueNo := path.Base(c.IssueURL)
-			content := fmt.Sprintf("Comment on issue #%s by %s:\n%s\n%s", issueNo, c.User.Login, c.HTMLURL, c.Body)
-			*messages = append(*messages, ChatMessage{Role: "user", Content: redact(content)})
-			added = true
-		}
-		if len(comments) < 50 {
-			break
-		}
-	}
-
-	return added
-}
-
-func isExecutable(content string) bool {
-	s := strings.TrimSpace(content)
-	return len(s) > 0 && !strings.Contains(s, "```") && s != "Done"
-}
-
 func main() {
 	syscall.Umask(0o077)
 	homeDir, _ = os.UserHomeDir()
+	contextPath = filepath.Join(homeDir, "context.log")
 	toolPath = filepath.Join(homeDir, "tool.sh")
-	statePath = filepath.Join(homeDir, ".iterxp_agent_state.json")
+
 	tokens = map[string]string{}
 	for _, name := range []string{"wandb", "github", "typesafe"} {
 		data, err := os.ReadFile(filepath.Join(homeDir, "token", name))
@@ -242,23 +164,72 @@ func main() {
 		}
 	}
 
-	st := loadState(statePath)
-	messages := []ChatMessage{{Role: "system", Content: systemPrompt}}
-	nextPoll := time.Time{}
-	needModel := false
+	f, err := os.OpenFile(contextPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		log.Fatal(err)
+	}
+	f.Close()
 
-	log.Printf("Watching %s; polling %s.", repo, "issues and comments")
+	seenIssues := map[int64]bool{}
+	seenComments := map[int64]bool{}
+	lastContext := ""
+	nextPoll := time.Time{}
+	emptyRetry := false
+
+	log.Printf("Watching %s; polling %s.", contextPath, repo)
 
 	for {
 		if time.Now().After(nextPoll) {
-			if pollGitHub(&messages, st) {
-				needModel = true
+			page := 1
+			for {
+				url := fmt.Sprintf("https://api.github.com/repos/%s/issues?state=open&per_page=100&page=%d", repo, page)
+				var issues []Issue
+				if err := fetchJSON(url, tokens["github"], &issues); err != nil {
+					log.Printf("GitHub issues error: %v", err)
+					break
+				}
+				for _, issue := range issues {
+					if len(issue.PullRequest) > 0 {
+						continue
+					}
+					if !seenIssues[issue.ID] {
+						seenIssues[issue.ID] = true
+						appendText(fmt.Sprintf("Issue #%d: %s\n%s\n%s", issue.Number, issue.Title, issue.HTMLURL, issue.Body))
+					}
+					cpage := 1
+					for {
+						curl := fmt.Sprintf("https://api.github.com/repos/%s/issues/%d/comments?per_page=100&page=%d", repo, issue.Number, cpage)
+						var comments []Comment
+						if err := fetchJSON(curl, tokens["github"], &comments); err != nil {
+							log.Printf("GitHub comments error: %v", err)
+							break
+						}
+						for _, comment := range comments {
+							if !seenComments[comment.ID] {
+								seenComments[comment.ID] = true
+								appendText(fmt.Sprintf("Comment on issue #%d by %s:\n%s\n%s", issue.Number, comment.User.Login, comment.HTMLURL, comment.Body))
+							}
+						}
+						if len(comments) < 100 {
+							break
+						}
+						cpage++
+					}
+				}
+				if len(issues) < 100 {
+					break
+				}
+				page++
 			}
-			saveState(statePath, st)
 			nextPoll = time.Now().Add(30 * time.Second)
 		}
 
-		if !needModel {
+		textData, err := os.ReadFile(contextPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+		text := string(textData)
+		if text == lastContext {
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -266,54 +237,61 @@ func main() {
 		payload := ChatRequest{
 			Model:           model,
 			MaxTokens:       16384,
-			ReasoningEffort: "low",
-			Messages:        messages,
+			ReasoningEffort: "high",
+			Messages: []Message{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: redact(text)},
+			},
 		}
+
 		data, err := apiCall("POST", apiBase, tokens["wandb"], payload, map[string]string{"OpenAI-Project": "longti/inference"})
 		if err != nil {
 			log.Printf("wandb API error: %v", err)
-			time.Sleep(2 * time.Second)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 
 		var chat ChatResponse
 		if err := json.Unmarshal(data, &chat); err != nil {
 			log.Printf("unmarshal chat: %v", err)
-			time.Sleep(2 * time.Second)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 		if len(chat.Choices) == 0 {
 			log.Println("no choices")
-			time.Sleep(2 * time.Second)
+			time.Sleep(1 * time.Second)
 			continue
 		}
 
 		choice := chat.Choices[0]
 		content := choice.Message.Content
 		reason := choice.FinishReason
+		refusal := choice.Message.Refusal
+		toolCalls := len(choice.Message.ToolCalls)
 
-		if content == "Done" {
-			messages = append(messages, ChatMessage{Role: "assistant", Content: "Done"})
-			needModel = false
+		if reason == "length" || strings.TrimSpace(content) == "" {
+			log.Printf("No complete Bash response: %s completion_tokens: %d", reason, chat.Usage.CompletionTokens)
+			if emptyRetry || (reason != "length" && reason != "stop") || refusal != "" || toolCalls > 0 {
+				log.Fatal("No executable Bash response; stopping without running anything.")
+			}
+			emptyRetry = true
+			appendText("The previous model response contained no complete Bash script. Return just one small next step.")
+			continue
+		}
+
+		emptyRetry = false
+		command := strings.TrimSpace(content)
+		lastContext = text
+
+		if command == "Done" {
 			log.Println("Done; waiting.")
 			continue
 		}
 
-		if reason == "length" || !isExecutable(content) || choice.Message.Refusal != "" || len(choice.Message.ToolCalls) > 0 {
-			log.Printf("No complete Bash response: %s completion_tokens: %d", reason, chat.Usage.CompletionTokens)
-			messages = append(messages, ChatMessage{Role: "assistant", Content: redact(content)})
-			messages = append(messages, ChatMessage{Role: "user", Content: "The previous response was not a complete Bash command. Return exactly one small Bash step, without Markdown fences."})
-			needModel = true
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
-		command := strings.TrimSpace(content)
-		messages = append(messages, ChatMessage{Role: "assistant", Content: command})
-
 		if err := os.WriteFile(toolPath, []byte(command+"\n"), 0700); err != nil {
 			log.Fatal(err)
 		}
+
 		cmd := exec.Command("bash", toolPath)
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout = &stdout
@@ -328,9 +306,8 @@ func main() {
 				exitCode = -1
 			}
 		}
-		result := fmt.Sprintf("$ %s\nstdout:\n%s\nstderr:\n%s\nexit_code: %d", command, stdout.String(), stderr.String(), exitCode)
-		messages = append(messages, ChatMessage{Role: "user", Content: redact(result)})
+
+		appendText(fmt.Sprintf("$ %s\nstdout:\n%s\nstderr:\n%s\nexit_code: %d", command, stdout.String(), stderr.String(), exitCode))
 		log.Printf("Bash exit_code=%d", exitCode)
-		time.Sleep(1 * time.Second)
 	}
 }
