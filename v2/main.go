@@ -14,6 +14,7 @@ import (
 
 type Config struct {
 	Repo                    string
+	GitHubAPIBase           string
 	Model                   string
 	Reasoning               string
 	MaxTokens               int
@@ -77,6 +78,7 @@ func loadConfig() Config {
 	base := getenv("ITERXP_CONFIG_DIR", filepath.Join(home, ".iterxp_v2"))
 	return Config{
 		Repo:                    getenv("ITERXP_REPO", "lzztt/iterxp"),
+		GitHubAPIBase:           getenv("ITERXP_GITHUB_API_BASE", "https://api.github.com"),
 		Model:                   getenv("ITERXP_MODEL", "deepseek-ai/DeepSeek-V4-Pro-0813"),
 		Reasoning:               getenv("ITERXP_REASONING_EFFORT", "high"),
 		MaxTokens:               getenvInt("ITERXP_MAX_TOKENS", 32768),
